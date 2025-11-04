@@ -29,3 +29,18 @@ Notes
 
 - This is a pure THRML solver (no deterministic backtracking). Convergence depends on warmup, steps-per-sample, self-bias, and seed. Increase them if needed.
 - Further improvement: add alternating column/box permutation blocks or soft annealing. If you want, I can extend the sampler schedule to alternate row/column (and box) updates for stronger consistency.
+
+How It Works (Intuition)
+------------------------
+
+- Energy: Think of “energy” as how wrong the board is. Every duplicate in a row/column/box adds to energy. A solved board has energy = 0.
+- Start: Keep given clues fixed (clamped). Fill unknown cells with random digits → high energy.
+- Local update (Gibbs): Update one cell (or a row block) at a time. Look at its 20 neighbors (row/col/box) and ask: for each digit 1–9, how many conflicts would it cause? Lower conflict = lower local energy.
+- Soft choice (temperature): Instead of always picking the single best digit, use a softmax over inverse-energy. That’s like “temperature”: at higher temperature, choices are more exploratory; lower temperature is greedier. A small self‑bias nudges a cell to keep a stable, legal value once it finds one.
+- Repeat sweeps: Iterate these local updates across all cells/rows many times. Local fixes ripple through neighbors, so the total energy tends to drop.
+- Samples: Take several snapshots after warmup and steps‑per‑sample; pick the board with the fewest conflicts (often zero).
+- Modes:
+  - `--mode cell`: Per‑cell softmax updates; forbids neighbor digits, falls back to least‑conflict choices if over‑constrained.
+  - `--mode row`: Row‑wise permutation updates; enforces uniqueness within a row in one block update, while still respecting column/box neighbors.
+
+In short: each cell behaves like a tiny particle trying to lower its stress given its neighbors; many small “cooling” steps collectively settle the entire board into a valid configuration.
