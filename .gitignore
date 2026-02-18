@@ -1,0 +1,13 @@
+# Rust build outputs
+/target/
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+
+# Release staging
+/dist/
+
+# macOS
+.DS_Store
