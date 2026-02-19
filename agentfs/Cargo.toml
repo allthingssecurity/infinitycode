@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/agentfs-core", "crates/agentfs-cli", "crates/agentfs-mcp", "crates/agentfs-agent"]
+resolver = "2"
