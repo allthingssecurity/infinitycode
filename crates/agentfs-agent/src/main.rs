@@ -13,6 +13,7 @@ mod streaming;
 mod tools;
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -560,14 +561,37 @@ async fn cmd_chat(
             }
         }
         None => {
-            // Auto-resume: check if the last session has saved messages
+            // Check if there's a previous session with saved messages
             let recent = db.sessions.list_recent(1).await?;
             if let Some(s) = recent.first() {
                 let key = format!("session:messages:{}", s.session_id);
                 match db.kv.get(&key).await {
                     Ok(entry) if entry.value.len() > 2 => {
-                        println!("Auto-resuming session: {}", s.session_id);
-                        (s.session_id.clone(), true)
+                        // Ask the user whether to resume or start fresh
+                        let short_id = if s.session_id.len() > 8 {
+                            &s.session_id[..8]
+                        } else {
+                            &s.session_id
+                        };
+                        let started = &s.started_at[..19.min(s.started_at.len())];
+                        println!(
+                            "\n  {}Previous session found:{} {}{}...{} ({})",
+                            "\x1b[1m", "\x1b[0m",
+                            "\x1b[36m", short_id, "\x1b[0m",
+                            started,
+                        );
+                        print!("  Resume previous session? [Y/n] ");
+                        std::io::stdout().flush().ok();
+
+                        let mut answer = String::new();
+                        std::io::stdin().read_line(&mut answer).ok();
+                        let answer = answer.trim().to_lowercase();
+
+                        if answer.is_empty() || answer == "y" || answer == "yes" {
+                            (s.session_id.clone(), true)
+                        } else {
+                            (Uuid::new_v4().to_string(), false)
+                        }
                     }
                     _ => (Uuid::new_v4().to_string(), false),
                 }
