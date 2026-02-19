@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TaskFlow — Smart Task Manager</title>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+    --text: #e4e4e7; --muted: #71717a; --accent: #818cf8;
+    --green: #34d399; --red: #f87171; --yellow: #fbbf24;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+  .app { max-width: 800px; margin: 0 auto; padding: 2rem 1rem; }
+  header { text-align: center; margin-bottom: 2rem; }
+  header h1 { font-size: 2rem; background: linear-gradient(135deg, var(--accent), var(--green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  header p { color: var(--muted); margin-top: 0.5rem; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem; }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 1rem; text-align: center;
+  }
+  .stat-card .number { font-size: 1.8rem; font-weight: 700; }
+  .stat-card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.25rem; }
+  .stat-card.total .number { color: var(--accent); }
+  .stat-card.done .number { color: var(--green); }
+  .stat-card.progress .number { color: var(--yellow); }
+  .stat-card.todo .number { color: var(--muted); }
+
+  .add-form {
+    display: flex; gap: 0.5rem; margin-bottom: 1.5rem;
+  }
+  .add-form input {
+    flex: 1; padding: 0.75rem 1rem; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 0.95rem; outline: none;
+    transition: border-color 0.2s;
+  }
+  .add-form input:focus { border-color: var(--accent); }
+  .add-form input::placeholder { color: var(--muted); }
+  .add-form select {
+    padding: 0.75rem; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 0.9rem; outline: none;
+  }
+  .add-form button {
+    padding: 0.75rem 1.25rem; background: var(--accent); border: none; border-radius: var(--radius);
+    color: white; font-weight: 600; cursor: pointer; font-size: 0.95rem;
+    transition: opacity 0.2s;
+  }
+  .add-form button:hover { opacity: 0.85; }
+
+  .filters {
+    display: flex; gap: 0.5rem; margin-bottom: 1rem;
+  }
+  .filters button {
+    padding: 0.4rem 0.8rem; background: transparent; border: 1px solid var(--border);
+    border-radius: 20px; color: var(--muted); cursor: pointer; font-size: 0.8rem;
+    transition: all 0.2s;
+  }
+  .filters button.active { background: var(--accent); border-color: var(--accent); color: white; }
+  .filters button:hover:not(.active) { border-color: var(--accent); color: var(--text); }
+
+  .task-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .task-item {
+    display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    transition: all 0.2s; animation: slideIn 0.3s ease;
+  }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+  .task-item:hover { border-color: var(--accent); }
+  .task-item.done { opacity: 0.5; }
+  .task-item.done .task-text { text-decoration: line-through; }
+
+  .checkbox {
+    width: 20px; height: 20px; border: 2px solid var(--border); border-radius: 50%;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s; flex-shrink: 0;
+  }
+  .checkbox:hover { border-color: var(--green); }
+  .checkbox.checked { background: var(--green); border-color: var(--green); }
+  .checkbox.checked::after { content: '\2713'; color: white; font-size: 12px; }
+
+  .task-text { flex: 1; font-size: 0.95rem; }
+  .priority-badge {
+    font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .priority-badge.high { background: rgba(248,113,113,0.15); color: var(--red); }
+  .priority-badge.medium { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .priority-badge.low { background: rgba(52,211,153,0.15); color: var(--green); }
+
+  .delete-btn {
+    background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1.1rem;
+    opacity: 0; transition: all 0.2s;
+  }
+  .task-item:hover .delete-btn { opacity: 1; }
+  .delete-btn:hover { color: var(--red); }
+
+  .empty {
+    text-align: center; padding: 3rem; color: var(--muted); font-size: 0.9rem;
+  }
+
+  footer {
+    text-align: center; margin-top: 3rem; padding-top: 1.5rem;
+    border-top: 1px solid var(--border); color: var(--muted); font-size: 0.8rem;
+  }
+  footer span { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>TaskFlow</h1>
+    <p>A smart task manager built by an AI agent</p>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <form class="add-form" id="addForm">
+    <input type="text" id="taskInput" placeholder="What needs to be done?" autocomplete="off">
+    <select id="priorityInput">
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+      <option value="low">Low</option>
+    </select>
+    <button type="submit">Add</button>
+  </form>
+
+  <div class="filters" id="filters">
+    <button class="active" data-filter="all">All</button>
+    <button data-filter="todo">To Do</button>
+    <button data-filter="done">Done</button>
+    <button data-filter="high">High Priority</button>
+  </div>
+
+  <div class="task-list" id="taskList"></div>
+
+  <footer>Built with <span>infinity-agent</span> &mdash; your AI coding companion</footer>
+</div>
+
+<script>
+  let tasks = JSON.parse(localStorage.getItem('taskflow') || '[]');
+  let filter = 'all';
+
+  if (!tasks.length) {
+    tasks = [
+      { id: 1, text: 'Design the landing page layout', priority: 'high', done: true },
+      { id: 2, text: 'Set up API authentication', priority: 'high', done: true },
+      { id: 3, text: 'Write unit tests for task CRUD', priority: 'medium', done: false },
+      { id: 4, text: 'Add dark mode toggle', priority: 'low', done: false },
+      { id: 5, text: 'Deploy to production', priority: 'high', done: false },
+    ];
+    save();
+  }
+
+  function save() { localStorage.setItem('taskflow', JSON.stringify(tasks)); }
+
+  function render() {
+    const filtered = tasks.filter(t => {
+      if (filter === 'todo') return !t.done;
+      if (filter === 'done') return t.done;
+      if (filter === 'high') return t.priority === 'high';
+      return true;
+    });
+
+    const total = tasks.length, done = tasks.filter(t => t.done).length;
+    const inProgress = tasks.filter(t => !t.done && t.priority === 'high').length;
+    const todo = total - done;
+
+    document.getElementById('stats').innerHTML = `
+      <div class="stat-card total"><div class="number">${total}</div><div class="label">Total</div></div>
+      <div class="stat-card done"><div class="number">${done}</div><div class="label">Completed</div></div>
+      <div class="stat-card progress"><div class="number">${inProgress}</div><div class="label">Urgent</div></div>
+      <div class="stat-card todo"><div class="number">${todo}</div><div class="label">Remaining</div></div>
+    `;
+
+    if (!filtered.length) {
+      document.getElementById('taskList').innerHTML = '<div class="empty">No tasks match this filter</div>';
+      return;
+    }
+
+    document.getElementById('taskList').innerHTML = filtered.map(t => `
+      <div class="task-item ${t.done ? 'done' : ''}">
+        <div class="checkbox ${t.done ? 'checked' : ''}" onclick="toggle(${t.id})"></div>
+        <span class="task-text">${esc(t.text)}</span>
+        <span class="priority-badge ${t.priority}">${t.priority}</span>
+        <button class="delete-btn" onclick="remove(${t.id})">&times;</button>
+      </div>
+    `).join('');
+  }
+
+  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  function toggle(id) {
+    const t = tasks.find(x => x.id === id);
+    if (t) { t.done = !t.done; save(); render(); }
+  }
+
+  function remove(id) {
+    tasks = tasks.filter(x => x.id !== id);
+    save(); render();
+  }
+
+  document.getElementById('addForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const input = document.getElementById('taskInput');
+    const text = input.value.trim();
+    if (!text) return;
+    tasks.push({ id: Date.now(), text, priority: document.getElementById('priorityInput').value, done: false });
+    input.value = '';
+    save(); render();
+  });
+
+  document.getElementById('filters').addEventListener('click', e => {
+    if (e.target.dataset.filter) {
+      filter = e.target.dataset.filter;
+      document.querySelectorAll('.filters button').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      render();
+    }
+  });
+
+  render();
+</script>
+</body>
+</html>

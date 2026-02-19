@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>infinity-agent dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#1a1a2e;--surface:#16213e;--card:#0f3460;--accent:#e94560;--text:#eee;--muted:#8892b0;--green:#4ade80;--orange:#fb923c;--blue:#60a5fa;--red:#f87171;--purple:#c084fc;--cyan:#22d3ee;--yellow:#facc15}
+body{background:var(--bg);color:var(--text);font-family:'SF Mono',Consolas,'Courier New',monospace;font-size:14px;line-height:1.5}
+a{color:var(--accent);text-decoration:none;cursor:pointer}
+a:hover{text-decoration:underline}
+
+/* ── Animations ── */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes slideIn{from{opacity:0;transform:translateY(-8px);max-height:0}to{opacity:1;transform:translateY(0);max-height:60px}}
+@keyframes flashIn{0%{background:#e9456040}100%{background:transparent}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes glowPulse{0%,100%{box-shadow:0 0 4px #4ade8030}50%{box-shadow:0 0 16px #4ade8060}}
+@keyframes borderGlow{0%,100%{border-color:#e9456040}50%{border-color:#e94560aa}}
+@keyframes typingDot{0%,80%,100%{opacity:.3}40%{opacity:1}}
+@keyframes countUp{from{opacity:.5;transform:scale(0.95)}to{opacity:1;transform:scale(1)}}
+@keyframes waveBar{0%{transform:scaleY(0.4)}50%{transform:scaleY(1)}100%{transform:scaleY(0.4)}}
+
+.header{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;background:var(--surface);border-bottom:1px solid #ffffff10}
+.header h1{font-size:18px;font-weight:600;letter-spacing:-0.5px}
+.header h1 span{color:var(--accent)}
+.live{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.live .dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+
+.tab-bar{display:flex;gap:0;background:var(--surface);border-bottom:1px solid #ffffff10;padding:0 24px}
+.tab{padding:10px 20px;font-size:13px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+.kpi-bar{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding:16px 24px;background:var(--surface);border-bottom:1px solid #ffffff10}
+.kpi{text-align:center;padding:12px 8px}
+.kpi .label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:4px}
+.kpi .value{font-size:24px;font-weight:700;transition:all .3s}
+.kpi .value.changed{animation:countUp .4s ease}
+.kpi .sub{font-size:11px;color:var(--muted);margin-top:2px}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px}
+.card{background:var(--surface);border-radius:8px;padding:16px;border:1px solid #ffffff08;transition:border-color .3s}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px}
+.card canvas{max-height:220px}
+.full{grid-column:1/-1}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 12px;border-bottom:1px solid #ffffff15;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.5px}
+td{padding:6px 12px;border-bottom:1px solid #ffffff08}
+tr:hover td{background:#ffffff05}
+tr.clickable{cursor:pointer}
+tr.clickable:hover td{background:#ffffff10}
+tr.row-active{animation:glowPulse 2s infinite}
+tr.row-active td{background:#4ade8008}
+
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-active{background:#4ade8030;color:var(--green)}
+.badge-completed{background:#60a5fa30;color:var(--blue)}
+.badge-error{background:#f8717130;color:var(--red)}
+.badge-strategy{background:#c084fc30;color:var(--purple)}
+.badge-mistake{background:#fb923c30;color:var(--orange)}
+.badge-pattern{background:#22d3ee30;color:var(--cyan)}
+
+/* ── Events with color-coded left border ── */
+.events-log{max-height:300px;overflow-y:auto;font-size:12px;scroll-behavior:smooth}
+.events-log .ev{display:flex;gap:12px;padding:5px 0 5px 10px;border-bottom:1px solid #ffffff05;border-left:3px solid transparent;transition:all .3s}
+.events-log .ev.ev-new{animation:slideIn .4s ease, flashIn .8s ease}
+.events-log .ev-border-read{border-left-color:var(--blue)}
+.events-log .ev-border-write{border-left-color:var(--green)}
+.events-log .ev-border-error{border-left-color:var(--red)}
+.events-log .ev-border-tool{border-left-color:var(--purple)}
+.events-log .ev-border-session{border-left-color:var(--cyan)}
+.events-log .ev-border-default{border-left-color:var(--accent)}
+.events-log .ev-time{color:var(--muted);min-width:140px;flex-shrink:0}
+.events-log .ev-type{min-width:120px;flex-shrink:0;font-weight:600}
+.events-log .ev-detail{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.events-log .ev-detail .file-path{color:var(--cyan);background:#22d3ee10;padding:1px 4px;border-radius:3px;font-size:11px}
+
+.search-bar{display:flex;gap:8px;margin-bottom:12px}
+.search-bar input{flex:1;padding:8px 12px;background:var(--bg);border:1px solid #ffffff20;border-radius:6px;color:var(--text);font-family:inherit;font-size:13px;outline:none}
+.search-bar input:focus{border-color:var(--accent)}
+.search-bar button{padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600}
+.search-bar button:hover{opacity:.85}
+
+.search-results .sr{padding:8px 0;border-bottom:1px solid #ffffff08}
+.search-results .sr-key{font-size:12px;color:var(--muted)}
+.search-results .sr-provider{font-size:11px;color:var(--accent);margin-left:8px}
+.search-results .sr-snippet{margin-top:4px}
+.search-results .sr-score{font-size:11px;color:var(--muted);margin-top:2px}
+
+.empty{color:var(--muted);font-style:italic;padding:16px 0;text-align:center}
+.view{display:none}
+.view.active{display:block}
+
+/* ── Activity Status Bar ── */
+.activity-bar{padding:12px 24px;background:linear-gradient(90deg,var(--surface),#16213ef0);border-bottom:1px solid #ffffff08;display:flex;align-items:center;gap:12px}
+.activity-bar.is-active{border-bottom:1px solid var(--green);background:linear-gradient(90deg,#16213e,#0f3460f0)}
+.activity-bar.is-active .activity-shimmer{display:block}
+.activity-shimmer{display:none;position:absolute;bottom:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--green),var(--cyan),transparent);background-size:200% 100%;animation:shimmer 2s linear infinite}
+.activity-indicator{position:relative;width:32px;height:32px;display:flex;align-items:center;justify-content:center}
+.activity-spinner{width:24px;height:24px;border:2px solid #ffffff15;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+.activity-idle{width:10px;height:10px;border-radius:50%;background:var(--muted)}
+.activity-text{flex:1;min-width:0}
+.activity-status{font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.activity-detail{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+.activity-detail .file-path{color:var(--cyan);background:#22d3ee10;padding:1px 4px;border-radius:3px}
+.activity-typing{display:inline-flex;gap:3px;margin-left:6px}
+.activity-typing span{width:4px;height:4px;border-radius:50%;background:var(--accent);animation:typingDot 1.4s infinite}
+.activity-typing span:nth-child(2){animation-delay:.2s}
+.activity-typing span:nth-child(3){animation-delay:.4s}
+.activity-stats{display:flex;gap:16px;font-size:11px;color:var(--muted);flex-shrink:0}
+.activity-stats .stat-val{color:var(--text);font-weight:600}
+
+/* ── Activity Sparkline ── */
+.sparkline-wrap{display:flex;align-items:flex-end;gap:1px;height:24px;padding:0 4px}
+.sparkline-bar{width:3px;min-height:1px;border-radius:1px;background:var(--accent);transition:height .3s;opacity:.7}
+.sparkline-bar.recent{opacity:1;background:var(--green)}
+
+/* ── Audio visualizer style for active ── */
+.wave-bars{display:flex;align-items:flex-end;gap:2px;height:20px}
+.wave-bar{width:3px;background:var(--green);border-radius:1px;animation:waveBar 1s ease-in-out infinite}
+.wave-bar:nth-child(1){animation-delay:0s;height:8px}
+.wave-bar:nth-child(2){animation-delay:.15s;height:14px}
+.wave-bar:nth-child(3){animation-delay:.3s;height:10px}
+.wave-bar:nth-child(4){animation-delay:.45s;height:18px}
+.wave-bar:nth-child(5){animation-delay:.6s;height:6px}
+
+/* ── Session detail ── */
+.back-link{display:inline-flex;align-items:center;gap:6px;padding:12px 24px;font-size:13px;color:var(--accent);cursor:pointer}
+.back-link:hover{text-decoration:underline}
+.session-header{padding:8px 24px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.session-header h2{font-size:16px;font-weight:600}
+.session-meta{display:flex;gap:16px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.session-meta span{display:flex;align-items:center;gap:4px}
+
+.tool-call{border:1px solid #ffffff08;border-radius:6px;margin-bottom:8px;overflow:hidden;transition:all .3s}
+.tool-call.tc-active{border-color:var(--green);animation:borderGlow 2s infinite}
+.tool-call.tc-new{animation:flashIn .8s ease}
+.tool-call-header{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;font-size:13px}
+.tool-call-header:hover{background:#ffffff05}
+.tool-call-header .tc-num{color:var(--muted);min-width:30px}
+.tool-call-header .tc-name{color:var(--accent);min-width:100px;font-weight:600}
+.tool-call-header .tc-status{min-width:24px;display:flex;align-items:center}
+.tool-call-header .tc-time{color:var(--muted);font-size:12px;margin-left:auto}
+.tool-call-header .tc-duration{color:var(--muted);font-size:11px;margin-left:8px}
+.tool-call-body{display:none;padding:8px 12px;background:#ffffff03;font-size:12px;border-top:1px solid #ffffff08}
+.tool-call-body pre{white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto;margin:4px 0;padding:6px;background:var(--bg);border-radius:4px}
+.tool-call-body .tc-label{color:var(--muted);font-size:11px;text-transform:uppercase;margin-top:6px}
+.tool-call.open .tool-call-body{display:block}
+
+.tc-spinner{width:14px;height:14px;border:2px solid #ffffff15;border-top-color:var(--green);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
+
+/* ── Progress ring for session ── */
+.progress-ring{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.progress-ring .ring{width:36px;height:36px;position:relative}
+.progress-ring .ring svg{transform:rotate(-90deg)}
+.progress-ring .ring-bg{fill:none;stroke:#ffffff10;stroke-width:3}
+.progress-ring .ring-fg{fill:none;stroke:var(--accent);stroke-width:3;stroke-linecap:round;transition:stroke-dashoffset .5s}
+
+/* ── Sub-tabs ── */
+.sub-tabs{display:flex;gap:0;padding:0 24px;background:var(--surface);border-bottom:1px solid #ffffff08}
+.sub-tab{padding:8px 16px;font-size:12px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent}
+.sub-tab:hover{color:var(--text)}
+.sub-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.sub-view{display:none}
+.sub-view.active{display:block}
+
+.pb-category{margin-bottom:16px}
+.pb-category h3{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:8px 0;border-bottom:1px solid #ffffff08}
+.pb-entry{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #ffffff05;font-size:13px}
+.pb-score{font-weight:700;min-width:36px;text-align:right}
+.pb-score.positive{color:var(--green)}
+.pb-score.negative{color:var(--red)}
+.pb-content{flex:1}
+.pb-session{font-size:11px;color:var(--muted)}
+
+.episode{padding:12px 0;border-bottom:1px solid #ffffff08}
+.episode-date{font-size:12px;color:var(--muted);margin-bottom:4px}
+.episode-summary{font-size:14px;margin-bottom:4px}
+.episode-details{font-size:12px;color:var(--muted)}
+.episode-details span{margin-right:16px}
+
+.tp-card{border:1px solid #ffffff08;border-radius:6px;margin-bottom:10px;overflow:hidden}
+.tp-header{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;font-size:13px}
+.tp-header:hover{background:#ffffff05}
+.tp-header .tp-name{color:var(--accent);font-weight:600}
+.tp-header .tp-counts{color:var(--muted);font-size:12px;margin-left:auto}
+.tp-body{display:none;padding:8px 12px;background:#ffffff03;font-size:12px;border-top:1px solid #ffffff08}
+.tp-card.open .tp-body{display:block}
+.tp-tip{padding:4px 0;display:flex;gap:8px;align-items:center}
+.tp-tip .icon{min-width:16px}
+.tp-error{padding:4px 0;display:flex;gap:8px;align-items:center;color:var(--orange)}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>infinity-agent</span> dashboard</h1>
+  <div class="live"><div class="dot"></div> live</div>
+</div>
+
+<div class="tab-bar">
+  <div class="tab active" data-view="overview" onclick="navigate('overview')">Overview</div>
+  <div class="tab" data-view="session" onclick="navigate('overview')">Session</div>
+  <div class="tab" data-view="brain" onclick="navigate('brain')">Agent Brain</div>
+</div>
+
+<!-- VIEW 1: OVERVIEW -->
+<div id="view-overview" class="view active">
+  <div class="kpi-bar">
+    <div class="kpi"><div class="label">Sessions</div><div class="value" id="kpi-sessions">-</div><div class="sub" id="kpi-sessions-active"></div></div>
+    <div class="kpi"><div class="label">Tokens</div><div class="value" id="kpi-tokens">-</div><div class="sub" id="kpi-cost"></div></div>
+    <div class="kpi"><div class="label">Tools</div><div class="value" id="kpi-tools">-</div><div class="sub" id="kpi-tools-sub"></div></div>
+    <div class="kpi"><div class="label">DB Size</div><div class="value" id="kpi-db">-</div><div class="sub" id="kpi-db-sub"></div></div>
+    <div class="kpi"><div class="label">Memory</div><div class="value" id="kpi-memory">-</div><div class="sub" id="kpi-memory-sub"></div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><h2>Token Usage by Model</h2><canvas id="chart-tokens"></canvas></div>
+    <div class="card"><h2>Tool Success Rates</h2><canvas id="chart-tools"></canvas></div>
+    <div class="card"><h2>Memory Tiers</h2><canvas id="chart-memory"></canvas></div>
+    <div class="card"><h2>Event Types</h2><canvas id="chart-events"></canvas></div>
+    <div class="card full"><h2>Cost per Session</h2><canvas id="chart-costs"></canvas></div>
+
+    <div class="card full">
+      <h2>Sessions (recent 50)</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Session ID</th><th>Agent</th><th>Status</th><th>Started</th><th>Duration</th><th>Activity</th></tr></thead>
+          <tbody id="sessions-table"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card full">
+      <h2>Events Log (recent 100)</h2>
+      <div class="events-log" id="events-log"><div class="empty">Loading...</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- VIEW 2: SESSION DETAIL -->
+<div id="view-session" class="view">
+  <a class="back-link" onclick="navigate('overview')">&#8592; Back to Overview</a>
+  <div class="session-header">
+    <h2 id="sd-title">Session</h2>
+    <div class="session-meta" id="sd-meta"></div>
+  </div>
+
+  <!-- Live Activity Status Bar -->
+  <div class="activity-bar" id="sd-activity" style="position:relative">
+    <div class="activity-shimmer"></div>
+    <div class="activity-indicator" id="sd-activity-icon">
+      <div class="activity-idle"></div>
+    </div>
+    <div class="activity-text">
+      <div class="activity-status" id="sd-activity-status">Loading...</div>
+      <div class="activity-detail" id="sd-activity-detail"></div>
+    </div>
+    <div class="activity-stats" id="sd-activity-stats"></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Token Breakdown</h2>
+      <canvas id="chart-sd-tokens"></canvas>
+      <div id="sd-token-summary" style="font-size:12px;color:var(--muted);margin-top:8px;text-align:center"></div>
+    </div>
+    <div class="card">
+      <h2>Tools Used</h2>
+      <canvas id="chart-sd-tools"></canvas>
+    </div>
+
+    <div class="card full">
+      <h2>Event Timeline <span id="sd-event-count" style="font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0"></span></h2>
+      <div class="events-log" id="sd-events" style="max-height:400px"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="card full">
+      <h2>Tool Calls <span id="sd-tc-count" style="font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0"></span></h2>
+      <div id="sd-tool-calls"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="card full">
+      <h2>Learnings from this Session</h2>
+      <div id="sd-learnings"><div class="empty">Loading...</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- VIEW 3: AGENT BRAIN -->
+<div id="view-brain" class="view">
+  <div class="sub-tabs">
+    <div class="sub-tab active" data-subtab="playbook" onclick="switchBrainTab('playbook')">Playbook</div>
+    <div class="sub-tab" data-subtab="episodes" onclick="switchBrainTab('episodes')">Episodes</div>
+    <div class="sub-tab" data-subtab="toolpatterns" onclick="switchBrainTab('toolpatterns')">Tool Patterns</div>
+    <div class="sub-tab" data-subtab="search" onclick="switchBrainTab('search')">Search</div>
+  </div>
+
+  <div class="grid">
+    <div class="card full sub-view active" id="brain-playbook">
+      <h2>Playbook</h2>
+      <div id="playbook-content"><div class="empty">Loading...</div></div>
+    </div>
+    <div class="card full sub-view" id="brain-episodes">
+      <h2>Episode History</h2>
+      <div id="episodes-content"><div class="empty">Loading...</div></div>
+    </div>
+    <div class="card full sub-view" id="brain-toolpatterns">
+      <h2>Tool Patterns</h2>
+      <div id="toolpatterns-content"><div class="empty">Loading...</div></div>
+    </div>
+    <div class="card full sub-view" id="brain-search">
+      <h2>Memory Search</h2>
+      <div class="search-bar">
+        <input id="search-input" type="text" placeholder="Search memory (BM25)..." />
+        <button onclick="doSearch()">Search</button>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+var POLL_MS = 5000;
+var POLL_ACTIVE_MS = 2000; // faster polling for active sessions
+var colors = {
+  accent: '#e94560', green: '#4ade80', orange: '#fb923c', blue: '#60a5fa',
+  red: '#f87171', purple: '#c084fc', cyan: '#22d3ee', yellow: '#facc15',
+  palette: ['#e94560','#60a5fa','#4ade80','#fb923c','#c084fc','#22d3ee','#facc15','#f87171']
+};
+
+Chart.defaults.color = '#8892b0';
+Chart.defaults.borderColor = '#ffffff10';
+
+var currentView = 'overview';
+var currentSessionId = null;
+var currentBrainTab = 'playbook';
+var pollTimer = null;
+var chartTokens, chartTools, chartMemory, chartEvents, chartCosts;
+var chartSdTokens, chartSdTools;
+
+// ── Change tracking state ──
+var prevKpi = {};
+var prevEventIds = new Set();
+var prevToolCallIds = new Set();
+var sdIsActive = false; // is current session active?
+
+// ── Routing ──
+function navigate(view, param) {
+  if (view === 'session' && param) {
+    window.location.hash = 'session/' + param;
+  } else {
+    window.location.hash = view;
+  }
+}
+
+function handleRoute() {
+  var hash = window.location.hash.slice(1) || 'overview';
+  document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+  document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+  prevEventIds.clear();
+  prevToolCallIds.clear();
+
+  if (hash.startsWith('session/')) {
+    currentView = 'session';
+    currentSessionId = hash.slice(8);
+    sdIsActive = false;
+    document.getElementById('view-session').classList.add('active');
+    document.querySelector('.tab[data-view="session"]').classList.add('active');
+    loadSessionDetail(currentSessionId);
+  } else if (hash === 'brain') {
+    currentView = 'brain';
+    currentSessionId = null;
+    document.getElementById('view-brain').classList.add('active');
+    document.querySelector('.tab[data-view="brain"]').classList.add('active');
+    refreshBrain();
+  } else {
+    currentView = 'overview';
+    currentSessionId = null;
+    document.getElementById('view-overview').classList.add('active');
+    document.querySelector('.tab[data-view="overview"]').classList.add('active');
+    refreshOverview();
+  }
+  restartPolling();
+}
+
+window.addEventListener('hashchange', handleRoute);
+
+// ── Helpers ──
+function fmt(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'k';
+  return String(n);
+}
+function fmtBytes(b) {
+  if (b >= 1e9) return (b/1e9).toFixed(1) + ' GB';
+  if (b >= 1e6) return (b/1e6).toFixed(1) + ' MB';
+  if (b >= 1e3) return (b/1e3).toFixed(1) + ' KB';
+  return b + ' B';
+}
+function fmtDuration(start, end) {
+  if (!start) return '-';
+  var s = new Date(start), e = end ? new Date(end) : new Date();
+  var diff = Math.floor((e - s) / 1000);
+  if (diff < 0) diff = 0;
+  if (diff < 60) return diff + 's';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ' + (diff%60) + 's';
+  return Math.floor(diff/3600) + 'h ' + Math.floor((diff%3600)/60) + 'm';
+}
+function fmtTime(ts) { return ts ? ts.replace('T',' ').slice(0,19) : '-'; }
+function fmtCost(mc) { return '$' + (mc / 1e8).toFixed(4); }
+function statusBadge(s) {
+  var cls = s === 'active' ? 'badge-active' : s === 'completed' ? 'badge-completed' : 'badge-error';
+  return '<span class="badge ' + cls + '">' + s + '</span>';
+}
+function categoryBadge(cat) {
+  var cls = cat === 'strategy' ? 'badge-strategy' : cat === 'mistake' ? 'badge-mistake' : 'badge-pattern';
+  return '<span class="badge ' + cls + '">' + cat + '</span>';
+}
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function truncate(s, max) { return !s ? '' : s.length > max ? s.slice(0, max) + '...' : s; }
+
+// Highlight file paths in detail text
+function highlightPaths(text) {
+  if (!text) return '';
+  return escHtml(text).replace(/(\/[\w\-\.\/]+\.\w+)/g, '<span class="file-path">$1</span>');
+}
+
+// Get border class for event type
+function evBorderClass(type) {
+  if (!type) return 'ev-border-default';
+  if (type.indexOf('read') >= 0) return 'ev-border-read';
+  if (type.indexOf('write') >= 0 || type.indexOf('create') >= 0) return 'ev-border-write';
+  if (type.indexOf('error') >= 0 || type.indexOf('fail') >= 0) return 'ev-border-error';
+  if (type.indexOf('tool') >= 0) return 'ev-border-tool';
+  if (type.indexOf('session') >= 0) return 'ev-border-session';
+  return 'ev-border-default';
+}
+
+// Get color for event type
+function evTypeColor(type) {
+  if (!type) return 'var(--accent)';
+  if (type.indexOf('error') >= 0 || type.indexOf('fail') >= 0) return 'var(--red)';
+  if (type.indexOf('start') >= 0) return 'var(--green)';
+  if (type.indexOf('end') >= 0 || type.indexOf('complete') >= 0) return 'var(--blue)';
+  if (type.indexOf('read') >= 0) return 'var(--cyan)';
+  if (type.indexOf('write') >= 0 || type.indexOf('create') >= 0) return 'var(--green)';
+  if (type.indexOf('tool') >= 0) return 'var(--purple)';
+  return 'var(--accent)';
+}
+
+// Animate KPI changes
+function setKpi(id, val) {
+  var el = document.getElementById(id);
+  var prev = prevKpi[id];
+  el.textContent = val;
+  if (prev !== undefined && prev !== val) {
+    el.classList.remove('changed');
+    void el.offsetWidth; // force reflow
+    el.classList.add('changed');
+  }
+  prevKpi[id] = val;
+}
+
+async function fetchJson(url) {
+  try { var r = await fetch(url); if (!r.ok) return null; return await r.json(); } catch(e) { return null; }
+}
+
+// ── Chart init ──
+function initOverviewCharts() {
+  if (chartTokens) return;
+  chartTokens = new Chart(document.getElementById('chart-tokens'), {
+    type: 'doughnut',
+    data: { labels: [], datasets: [{ data: [], backgroundColor: colors.palette, borderWidth: 0 }] },
+    options: { responsive: true, plugins: { legend: { position: 'right', labels: { boxWidth: 12, padding: 8 } } } }
+  });
+  chartTools = new Chart(document.getElementById('chart-tools'), {
+    type: 'bar',
+    data: { labels: [], datasets: [
+      { label: 'Success', data: [], backgroundColor: colors.green + '80' },
+      { label: 'Errors', data: [], backgroundColor: colors.red + '80' }
+    ]},
+    options: { indexAxis: 'y', responsive: true, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, grid: { display: false } } }, plugins: { legend: { display: true, labels: { boxWidth: 12 } } } }
+  });
+  chartMemory = new Chart(document.getElementById('chart-memory'), {
+    type: 'doughnut',
+    data: { labels: ['Hot','Warm','Cold'], datasets: [{ data: [0,0,0], backgroundColor: [colors.red, colors.orange, colors.blue], borderWidth: 0 }] },
+    options: { responsive: true, plugins: { legend: { position: 'right', labels: { boxWidth: 12, padding: 8 } } } }
+  });
+  chartEvents = new Chart(document.getElementById('chart-events'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'Count', data: [], backgroundColor: colors.palette.map(function(c) { return c + '80'; }) }] },
+    options: { responsive: true, scales: { y: { beginAtZero: true, grid: { display: false } }, x: { grid: { display: false } } }, plugins: { legend: { display: false } } }
+  });
+  chartCosts = new Chart(document.getElementById('chart-costs'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'Cost ($)', data: [], backgroundColor: colors.accent + '80' }] },
+    options: { responsive: true, scales: { y: { beginAtZero: true, grid: { display: false }, ticks: { callback: function(v) { return '$' + v.toFixed(4); } } }, x: { grid: { display: false } } }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return '$' + ctx.raw.toFixed(4); } } } } }
+  });
+}
+
+function initSessionCharts() {
+  if (chartSdTokens) chartSdTokens.destroy();
+  if (chartSdTools) chartSdTools.destroy();
+  chartSdTokens = new Chart(document.getElementById('chart-sd-tokens'), {
+    type: 'doughnut',
+    data: { labels: ['Input','Output','Cache Read'], datasets: [{ data: [0,0,0], backgroundColor: [colors.blue, colors.green, colors.purple], borderWidth: 0 }] },
+    options: { responsive: true, plugins: { legend: { position: 'right', labels: { boxWidth: 12, padding: 8 } } } }
+  });
+  chartSdTools = new Chart(document.getElementById('chart-sd-tools'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'Calls', data: [], backgroundColor: colors.palette.map(function(c) { return c + '80'; }) }] },
+    options: { responsive: true, indexAxis: 'y', scales: { x: { beginAtZero: true, grid: { display: false } }, y: { grid: { display: false } } }, plugins: { legend: { display: false } } }
+  });
+}
+
+// ── Overview refresh ──
+async function refreshInfo() {
+  var d = await fetchJson('/api/info');
+  if (!d) return;
+  setKpi('kpi-sessions', d.session_count);
+  document.getElementById('kpi-sessions-active').textContent = d.active_sessions + ' active';
+  setKpi('kpi-tokens', fmt(d.total_tokens));
+  document.getElementById('kpi-cost').textContent = fmtCost(d.total_cost_microcents);
+  setKpi('kpi-db', fmtBytes(d.db_size_bytes));
+  document.getElementById('kpi-db-sub').textContent = d.inode_count + ' inodes, ' + d.kv_count + ' kv';
+  setKpi('kpi-tools', d.tool_call_count);
+  document.getElementById('kpi-tools-sub').textContent = d.event_count + ' events';
+}
+async function refreshTokens() {
+  var d = await fetchJson('/api/tokens');
+  if (!d || !d.by_model) return;
+  chartTokens.data.labels = d.by_model.map(function(m) { return m.model; });
+  chartTokens.data.datasets[0].data = d.by_model.map(function(m) { return m.input_tokens + m.output_tokens; });
+  chartTokens.data.datasets[0].backgroundColor = colors.palette.slice(0, d.by_model.length);
+  chartTokens.update('none');
+}
+async function refreshTools() {
+  var d = await fetchJson('/api/tools');
+  if (!d) return;
+  chartTools.data.labels = d.map(function(t) { return t.tool_name; });
+  chartTools.data.datasets[0].data = d.map(function(t) { return t.successes; });
+  chartTools.data.datasets[1].data = d.map(function(t) { return t.errors; });
+  chartTools.update('none');
+}
+async function refreshEvents() {
+  var d = await fetchJson('/api/events');
+  if (!d) return;
+  if (d.by_type) {
+    chartEvents.data.labels = d.by_type.map(function(t) { return t[0]; });
+    chartEvents.data.datasets[0].data = d.by_type.map(function(t) { return t[1]; });
+    chartEvents.data.datasets[0].backgroundColor = colors.palette.slice(0, d.by_type.length);
+    chartEvents.update('none');
+  }
+  var el = document.getElementById('events-log');
+  if (!d.recent || d.recent.length === 0) { el.innerHTML = '<div class="empty">No events yet</div>'; return; }
+  el.innerHTML = d.recent.map(function(e) {
+    var isNew = !prevEventIds.has(e.id) && prevEventIds.size > 0;
+    var cls = 'ev ' + evBorderClass(e.event_type) + (isNew ? ' ev-new' : '');
+    return '<div class="' + cls + '"><span class="ev-time">' + fmtTime(e.recorded_at) + '</span><span class="ev-type" style="color:' + evTypeColor(e.event_type) + '">' + e.event_type + '</span><span class="ev-detail">' + highlightPaths(e.detail || e.path || '') + '</span></div>';
+  }).join('');
+  // Track seen IDs
+  prevEventIds.clear();
+  d.recent.forEach(function(e) { prevEventIds.add(e.id); });
+}
+async function refreshSessions() {
+  var d = await fetchJson('/api/sessions');
+  if (!d) return;
+  var el = document.getElementById('sessions-table');
+  if (d.length === 0) { el.innerHTML = '<tr><td colspan="6" class="empty">No sessions yet</td></tr>'; return; }
+  el.innerHTML = d.map(function(s) {
+    var isActive = s.status === 'active';
+    var rowCls = 'clickable' + (isActive ? ' row-active' : '');
+    var activityCol = isActive ?
+      '<td><div class="wave-bars"><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div></div></td>' :
+      '<td style="color:var(--muted)">-</td>';
+    return '<tr class="' + rowCls + '" onclick="navigate(\'session\',\'' + s.session_id + '\')"><td title="' + s.session_id + '">' + s.session_id.slice(0,8) + '...</td><td>' + (s.agent_name||'-') + '</td><td>' + statusBadge(s.status) + '</td><td>' + fmtTime(s.started_at) + '</td><td>' + fmtDuration(s.started_at, s.ended_at) + '</td>' + activityCol + '</tr>';
+  }).join('');
+}
+async function refreshMemory() {
+  var d = await fetchJson('/api/memory');
+  if (!d) return;
+  chartMemory.data.datasets[0].data = [d.tiers.hot, d.tiers.warm, d.tiers.cold];
+  chartMemory.update('none');
+  setKpi('kpi-memory', d.tiers.hot + 'H/' + d.tiers.warm + 'W/' + d.tiers.cold + 'C');
+  document.getElementById('kpi-memory-sub').textContent = d.pressure + ' pressure';
+}
+async function refreshCosts() {
+  var d = await fetchJson('/api/sessions/costs');
+  if (!d || d.length === 0) return;
+  var recent = d.slice(0, 20);
+  chartCosts.data.labels = recent.map(function(c) { return (c.session_id || '').slice(0, 8); });
+  chartCosts.data.datasets[0].data = recent.map(function(c) { return c.cost_microcents / 1e8; });
+  chartCosts.update('none');
+}
+async function refreshOverview() {
+  initOverviewCharts();
+  await Promise.all([refreshInfo(), refreshTokens(), refreshTools(), refreshEvents(), refreshSessions(), refreshMemory(), refreshCosts()]);
+}
+
+// ── Session detail ──
+async function loadSessionDetail(id) {
+  initSessionCharts();
+  prevEventIds.clear();
+  prevToolCallIds.clear();
+  await refreshSessionDetail(id);
+}
+
+async function refreshSessionDetail(id) {
+  if (!id) id = currentSessionId;
+  if (!id) return;
+  var eid = encodeURIComponent(id);
+  var results = await Promise.all([
+    fetchJson('/api/sessions/' + eid),
+    fetchJson('/api/sessions/' + eid + '/events'),
+    fetchJson('/api/sessions/' + eid + '/tokens'),
+    fetchJson('/api/sessions/' + eid + '/tools'),
+    fetchJson('/api/sessions/' + eid + '/learnings'),
+  ]);
+  var session = results[0], events = results[1], tokens = results[2], tools = results[3], learnings = results[4];
+
+  // Header
+  if (session) {
+    document.getElementById('sd-title').textContent = 'Session ' + session.session_id.slice(0,8) + '...';
+    var model = '';
+    if (session.metadata) { try { var m = JSON.parse(session.metadata); model = m.model || ''; } catch(e) {} }
+    document.getElementById('sd-meta').innerHTML =
+      '<span>' + statusBadge(session.status) + '</span>' +
+      '<span>Duration: ' + fmtDuration(session.started_at, session.ended_at) + '</span>' +
+      (model ? '<span>Model: ' + model + '</span>' : '') +
+      '<span>Agent: ' + (session.agent_name || '-') + '</span>';
+    sdIsActive = session.status === 'active';
+  }
+
+  // Activity bar
+  updateActivityBar(session, events, tools, tokens);
+
+  // Token chart
+  if (tokens && tokens.length > 0) {
+    var totalIn = 0, totalOut = 0, totalCache = 0, totalCost = 0;
+    tokens.forEach(function(t) { totalIn += t.input_tokens; totalOut += t.output_tokens; totalCache += t.cache_read_tokens; totalCost += t.cost_microcents; });
+    chartSdTokens.data.datasets[0].data = [totalIn, totalOut, totalCache];
+    chartSdTokens.update('none');
+    document.getElementById('sd-token-summary').textContent = fmt(totalIn) + ' in / ' + fmt(totalOut) + ' out / ' + fmt(totalCache) + ' cache | Cost: ' + fmtCost(totalCost);
+  } else {
+    chartSdTokens.data.datasets[0].data = [0, 0, 0];
+    chartSdTokens.update('none');
+    document.getElementById('sd-token-summary').textContent = 'No token data';
+  }
+
+  // Tools chart
+  if (tools && tools.length > 0) {
+    var toolCounts = {};
+    tools.forEach(function(t) { toolCounts[t.tool_name] = (toolCounts[t.tool_name] || 0) + 1; });
+    var sorted = Object.entries(toolCounts).sort(function(a, b) { return b[1] - a[1]; });
+    chartSdTools.data.labels = sorted.map(function(s) { return s[0]; });
+    chartSdTools.data.datasets[0].data = sorted.map(function(s) { return s[1]; });
+    chartSdTools.data.datasets[0].backgroundColor = colors.palette.slice(0, sorted.length);
+    chartSdTools.update('none');
+  }
+
+  // Events timeline with new-event detection
+  var evEl = document.getElementById('sd-events');
+  var evCount = events ? events.length : 0;
+  document.getElementById('sd-event-count').textContent = evCount > 0 ? '(' + evCount + ')' : '';
+  if (events && events.length > 0) {
+    evEl.innerHTML = events.map(function(e) {
+      var isNew = !prevEventIds.has(e.id) && prevEventIds.size > 0;
+      var cls = 'ev ' + evBorderClass(e.event_type) + (isNew ? ' ev-new' : '');
+      return '<div class="' + cls + '"><span class="ev-time">' + fmtTime(e.recorded_at) + '</span><span class="ev-type" style="color:' + evTypeColor(e.event_type) + '">' + e.event_type + '</span><span class="ev-detail">' + highlightPaths(e.detail || e.path || '') + '</span></div>';
+    }).join('');
+    // Auto-scroll to bottom for new events
+    if (prevEventIds.size > 0) {
+      var hasNew = events.some(function(e) { return !prevEventIds.has(e.id); });
+      if (hasNew) evEl.scrollTop = evEl.scrollHeight;
+    }
+    prevEventIds.clear();
+    events.forEach(function(e) { prevEventIds.add(e.id); });
+  } else {
+    evEl.innerHTML = '<div class="empty">No events for this session</div>';
+  }
+
+  // Tool calls with live status
+  var tcEl = document.getElementById('sd-tool-calls');
+  var tcCount = tools ? tools.length : 0;
+  var tcActive = tools ? tools.filter(function(t) { return t.status === 'started'; }).length : 0;
+  document.getElementById('sd-tc-count').textContent = tcCount > 0 ? '(' + tcCount + (tcActive > 0 ? ', ' + tcActive + ' running' : '') + ')' : '';
+  if (tools && tools.length > 0) {
+    tcEl.innerHTML = tools.map(function(t, i) {
+      var isStarted = t.status === 'started';
+      var isNew = !prevToolCallIds.has(t.id) && prevToolCallIds.size > 0;
+      var statusIcon = isStarted ? '<div class="tc-spinner"></div>' :
+                       t.status === 'success' ? '<span style="color:var(--green)">&#10003;</span>' :
+                       t.status === 'error' ? '<span style="color:var(--red)">&#10007;</span>' :
+                       '<span style="color:var(--orange)">&#9679;</span>';
+      var tcCls = 'tool-call' + (isStarted ? ' tc-active' : '') + (isNew ? ' tc-new' : '');
+      var dur = t.started_at ? (t.ended_at ? fmtDuration(t.started_at, t.ended_at) : (isStarted ? fmtDuration(t.started_at, null) + '...' : '')) : '';
+      var body = '';
+      if (t.input) body += '<div class="tc-label">Input</div><pre>' + escHtml(truncate(t.input, 2000)) + '</pre>';
+      if (t.output) body += '<div class="tc-label">Output</div><pre>' + escHtml(truncate(t.output, 2000)) + '</pre>';
+      if (t.error_msg) body += '<div class="tc-label" style="color:var(--red)">Error</div><pre style="color:var(--red)">' + escHtml(t.error_msg) + '</pre>';
+      return '<div class="' + tcCls + '" onclick="this.classList.toggle(\'open\')">' +
+        '<div class="tool-call-header">' +
+          '<span class="tc-num">#' + (i+1) + '</span>' +
+          '<span class="tc-name">' + t.tool_name + '</span>' +
+          '<span class="tc-status">' + statusIcon + '</span>' +
+          '<span class="tc-time">' + fmtTime(t.started_at) + '</span>' +
+          (dur ? '<span class="tc-duration">' + dur + '</span>' : '') +
+        '</div>' +
+        (body ? '<div class="tool-call-body">' + body + '</div>' : '') +
+      '</div>';
+    }).join('');
+    prevToolCallIds.clear();
+    tools.forEach(function(t) { prevToolCallIds.add(t.id); });
+  } else {
+    tcEl.innerHTML = '<div class="empty">No tool calls for this session</div>';
+  }
+
+  // Learnings
+  var lnEl = document.getElementById('sd-learnings');
+  if (learnings && learnings.length > 0) {
+    lnEl.innerHTML = learnings.map(function(l) {
+      var score = l.helpful - l.harmful;
+      var cls = score >= 0 ? 'positive' : 'negative';
+      return '<div class="pb-entry">' +
+        '<span class="pb-score ' + cls + '">' + (score >= 0 ? '+' : '') + score + '</span>' +
+        categoryBadge(l.category) +
+        '<span class="pb-content">' + escHtml(l.content) + '</span>' +
+      '</div>';
+    }).join('');
+  } else {
+    lnEl.innerHTML = '<div class="empty">No learnings recorded for this session</div>';
+  }
+
+  // Adjust polling speed
+  restartPolling();
+}
+
+// ── Activity Bar ──
+function updateActivityBar(session, events, tools, tokens) {
+  var bar = document.getElementById('sd-activity');
+  var icon = document.getElementById('sd-activity-icon');
+  var status = document.getElementById('sd-activity-status');
+  var detail = document.getElementById('sd-activity-detail');
+  var stats = document.getElementById('sd-activity-stats');
+
+  var isActive = session && session.status === 'active';
+  bar.classList.toggle('is-active', isActive);
+
+  // Stats
+  var tcTotal = tools ? tools.length : 0;
+  var tcRunning = tools ? tools.filter(function(t) { return t.status === 'started'; }).length : 0;
+  var totalTok = 0;
+  if (tokens) tokens.forEach(function(t) { totalTok += t.input_tokens + t.output_tokens; });
+  stats.innerHTML =
+    '<span>Tools: <span class="stat-val">' + tcTotal + '</span></span>' +
+    '<span>Events: <span class="stat-val">' + (events ? events.length : 0) + '</span></span>' +
+    '<span>Tokens: <span class="stat-val">' + fmt(totalTok) + '</span></span>';
+
+  if (!isActive) {
+    icon.innerHTML = '<div class="activity-idle"></div>';
+    if (session && session.status === 'completed') {
+      status.innerHTML = '<span style="color:var(--blue)">Session completed</span>';
+    } else if (session && session.status) {
+      status.innerHTML = '<span style="color:var(--red)">Session ' + session.status + '</span>';
+    } else {
+      status.innerHTML = '<span style="color:var(--muted)">Session not found</span>';
+    }
+    detail.innerHTML = session ? 'Duration: ' + fmtDuration(session.started_at, session.ended_at) : '';
+    return;
+  }
+
+  // Active session: derive current activity from latest event or tool call
+  icon.innerHTML = '<div class="activity-spinner"></div>';
+
+  var latestTool = null;
+  if (tools && tools.length > 0) {
+    // Find running tool call
+    var running = tools.filter(function(t) { return t.status === 'started'; });
+    latestTool = running.length > 0 ? running[running.length - 1] : tools[tools.length - 1];
+  }
+
+  var latestEvent = events && events.length > 0 ? events[events.length - 1] : null;
+
+  if (latestTool && latestTool.status === 'started') {
+    var toolLabel = latestTool.tool_name;
+    var inputHint = '';
+    if (latestTool.input) {
+      try {
+        var inp = JSON.parse(latestTool.input);
+        if (inp.path) inputHint = inp.path;
+        else if (inp.cmd) inputHint = inp.cmd;
+        else if (inp.command) inputHint = inp.command;
+        else if (inp.file_path) inputHint = inp.file_path;
+      } catch(e) { inputHint = truncate(latestTool.input, 80); }
+    }
+    status.innerHTML = '<span style="color:var(--green)">Running: ' + toolLabel + '</span>' +
+      '<div class="activity-typing"><span></span><span></span><span></span></div>';
+    detail.innerHTML = inputHint ? highlightPaths(inputHint) : 'Working...';
+  } else if (latestEvent) {
+    var evLabel = latestEvent.event_type.replace(/_/g, ' ');
+    status.innerHTML = '<span style="color:var(--cyan)">' + evLabel + '</span>' +
+      '<div class="activity-typing"><span></span><span></span><span></span></div>';
+    detail.innerHTML = highlightPaths(latestEvent.detail || latestEvent.path || 'Processing...');
+  } else {
+    status.innerHTML = '<span style="color:var(--green)">Active</span>' +
+      '<div class="activity-typing"><span></span><span></span><span></span></div>';
+    detail.innerHTML = 'Waiting for events...';
+  }
+}
+
+// ── Agent Brain ──
+function switchBrainTab(tab) {
+  currentBrainTab = tab;
+  document.querySelectorAll('.sub-tab').forEach(function(t) { t.classList.toggle('active', t.dataset.subtab === tab); });
+  document.querySelectorAll('.sub-view').forEach(function(v) { v.classList.remove('active'); });
+  document.getElementById('brain-' + tab).classList.add('active');
+}
+
+async function refreshBrain() {
+  var results = await Promise.all([
+    fetchJson('/api/memory/playbook'),
+    fetchJson('/api/memory/episodes'),
+    fetchJson('/api/memory/tool-patterns'),
+  ]);
+  renderPlaybook(results[0]);
+  renderEpisodes(results[1]);
+  renderToolPatterns(results[2]);
+}
+
+function renderPlaybook(data) {
+  var el = document.getElementById('playbook-content');
+  if (!data || data.length === 0) {
+    el.innerHTML = '<div class="empty">No playbook entries yet. The agent learns strategies, mistakes, and patterns as it works.</div>';
+    return;
+  }
+  var groups = { strategy: [], mistake: [], pattern: [] };
+  data.forEach(function(e) {
+    var cat = e.category || 'pattern';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(e);
+  });
+  var labels = { strategy: 'STRATEGIES', mistake: 'MISTAKES TO AVOID', pattern: 'PATTERNS & CONVENTIONS' };
+  var html = '';
+  ['strategy', 'mistake', 'pattern'].forEach(function(cat) {
+    var entries = groups[cat];
+    if (!entries || entries.length === 0) return;
+    html += '<div class="pb-category"><h3>' + labels[cat] + '</h3>';
+    entries.forEach(function(e) {
+      var score = e.helpful - e.harmful;
+      var cls = score >= 0 ? 'positive' : 'negative';
+      var sessLink = e.source_session ?
+        '<a class="pb-session" onclick="navigate(\'session\',\'' + e.source_session + '\')">[sess: ' + e.source_session.slice(0,8) + ']</a>' : '';
+      html += '<div class="pb-entry">' +
+        '<span class="pb-score ' + cls + '">' + (score >= 0 ? '+' : '') + score + '</span>' +
+        '<span class="pb-content">' + escHtml(e.content) + '</span>' +
+        sessLink +
+      '</div>';
+    });
+    html += '</div>';
+  });
+  el.innerHTML = html;
+}
+
+function renderEpisodes(data) {
+  var el = document.getElementById('episodes-content');
+  if (!data || data.length === 0) {
+    el.innerHTML = '<div class="empty">No episodes recorded yet. Episodes are created at the end of each session.</div>';
+    return;
+  }
+  el.innerHTML = data.map(function(ep) {
+    var date = ep.created ? ep.created.slice(0, 10) : '-';
+    var outcomeIcon = (ep.outcome === 'success' || ep.outcome === 'completed') ?
+      '<span style="color:var(--green)">&#10003;</span>' : '<span style="color:var(--orange)">?</span>';
+    return '<div class="episode">' +
+      '<div class="episode-date">' + date + '</div>' +
+      '<div class="episode-summary">' + escHtml(ep.summary) + '</div>' +
+      '<div class="episode-details">' +
+        (ep.key_decisions.length > 0 ? '<span>decisions: ' + ep.key_decisions.map(function(d) { return escHtml(d); }).join(', ') + '</span>' : '') +
+        '<span>tools: ' + (ep.tools_used.join(', ') || 'none') + '</span>' +
+        '<span>outcome: ' + outcomeIcon + ' ' + ep.outcome + '</span>' +
+        '<a onclick="navigate(\'session\',\'' + ep.session_id + '\')" style="font-size:11px">[view session]</a>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderToolPatterns(data) {
+  var el = document.getElementById('toolpatterns-content');
+  if (!data || data.length === 0) {
+    el.innerHTML = '<div class="empty">No tool patterns learned yet. The agent discovers tips and common errors as it uses tools.</div>';
+    return;
+  }
+  el.innerHTML = data.map(function(tp) {
+    var tipCount = tp.patterns ? tp.patterns.length : 0;
+    var errCount = tp.common_errors ? tp.common_errors.length : 0;
+    var body = '';
+    if (tp.patterns) {
+      var sorted = tp.patterns.slice().sort(function(a, b) { return b.helpful - a.helpful; });
+      body += sorted.map(function(p) {
+        return '<div class="tp-tip"><span class="icon" style="color:var(--cyan)">&#10070;</span> ' + escHtml(p.pattern) + ' <span style="color:var(--muted);margin-left:auto">(helpful: ' + p.helpful + ')</span></div>';
+      }).join('');
+    }
+    if (tp.common_errors) {
+      var sortedE = tp.common_errors.slice().sort(function(a, b) { return b.frequency - a.frequency; });
+      body += sortedE.map(function(e) {
+        return '<div class="tp-error"><span class="icon">&#9888;</span> ' + escHtml(e.error) + ' <span style="color:var(--muted);margin-left:auto">(freq: ' + e.frequency + ')</span></div>';
+      }).join('');
+    }
+    return '<div class="tp-card" onclick="this.classList.toggle(\'open\')">' +
+      '<div class="tp-header">' +
+        '<span class="tp-name">' + tp.tool + '</span>' +
+        '<span class="tp-counts">' + tipCount + ' tip' + (tipCount !== 1 ? 's' : '') + ', ' + errCount + ' error' + (errCount !== 1 ? 's' : '') + '</span>' +
+      '</div>' +
+      (body ? '<div class="tp-body">' + body + '</div>' : '') +
+    '</div>';
+  }).join('');
+}
+
+async function doSearch() {
+  var q = document.getElementById('search-input').value.trim();
+  var el = document.getElementById('search-results');
+  if (!q) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="empty">Searching...</div>';
+  var d = await fetchJson('/api/memory/search?q=' + encodeURIComponent(q) + '&limit=10');
+  if (!d || d.length === 0) { el.innerHTML = '<div class="empty">No results</div>'; return; }
+  el.innerHTML = d.map(function(r) {
+    return '<div class="sr"><div><span class="sr-key">' + r.key + '</span><span class="sr-provider">' + r.provider + '</span></div><div class="sr-snippet">' + r.snippet + '</div><div class="sr-score">BM25: ' + r.bm25_score.toFixed(3) + '</div></div>';
+  }).join('');
+}
+
+// ── Smart polling (faster for active sessions) ──
+function restartPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  var interval = (currentView === 'session' && sdIsActive) ? POLL_ACTIVE_MS : POLL_MS;
+  pollTimer = setInterval(pollActive, interval);
+}
+async function pollActive() {
+  if (currentView === 'overview') await refreshOverview();
+  else if (currentView === 'session' && currentSessionId) await refreshSessionDetail(currentSessionId);
+  else if (currentView === 'brain') await refreshBrain();
+}
+
+// ── Init ──
+document.getElementById('search-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doSearch(); });
+handleRoute();
+</script>
+</body>
+</html>
