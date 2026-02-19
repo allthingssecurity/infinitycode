@@ -1,6 +1,17 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use agentfs_core::AgentFS;
+use serde::{Deserialize, Serialize};
+
+/// JSON-serializable skill for DB storage (no `dir` — not meaningful in DB).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillRecord {
+    name: String,
+    description: String,
+    body: String,
+}
+
 /// A loaded skill from a SKILL.md file.
 #[derive(Debug, Clone)]
 pub struct Skill {
@@ -88,6 +99,77 @@ impl SkillRegistry {
     /// Whether any skills are loaded.
     pub fn is_empty(&self) -> bool {
         self.skills.is_empty()
+    }
+
+    // ── DB-backed methods ────────────────────────────────────────────
+
+    /// Load skills from the DB (`config:skill:*` keys).
+    /// If the DB has no skills, fall back to filesystem `load()` and import each to DB.
+    pub async fn load_from_db(db: &AgentFS) -> Self {
+        let entries = db.kv.list_prefix("config:skill:").await.unwrap_or_default();
+
+        if !entries.is_empty() {
+            let mut skills = HashMap::new();
+            for entry in entries {
+                if let Ok(record) = serde_json::from_str::<SkillRecord>(&entry.value) {
+                    skills.insert(
+                        record.name.clone(),
+                        Skill {
+                            name: record.name,
+                            description: record.description,
+                            body: record.body,
+                            dir: PathBuf::new(),
+                        },
+                    );
+                }
+            }
+            return Self { skills };
+        }
+
+        // Fallback: load from filesystem and import to DB
+        let registry = Self::load();
+        for skill in registry.skills.values() {
+            Self::save_to_db(db, skill).await;
+        }
+        registry
+    }
+
+    /// Persist a single skill to the DB.
+    pub async fn save_to_db(db: &AgentFS, skill: &Skill) {
+        let record = SkillRecord {
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            body: skill.body.clone(),
+        };
+        let key = format!("config:skill:{}", skill.name);
+        if let Ok(json) = serde_json::to_string(&record) {
+            let _ = db.kv.set(&key, &json).await;
+        }
+    }
+
+    /// Remove a skill from the DB by name.
+    pub async fn remove_from_db(db: &AgentFS, name: &str) -> bool {
+        let key = format!("config:skill:{name}");
+        db.kv.delete(&key).await.is_ok()
+    }
+
+    /// List all skills stored in the DB.
+    pub async fn list_from_db(db: &AgentFS) -> Vec<Skill> {
+        let entries = db.kv.list_prefix("config:skill:").await.unwrap_or_default();
+        let mut skills: Vec<Skill> = entries
+            .into_iter()
+            .filter_map(|entry| {
+                let record: SkillRecord = serde_json::from_str(&entry.value).ok()?;
+                Some(Skill {
+                    name: record.name,
+                    description: record.description,
+                    body: record.body,
+                    dir: PathBuf::new(),
+                })
+            })
+            .collect();
+        skills.sort_by(|a, b| a.name.cmp(&b.name));
+        skills
     }
 }
 

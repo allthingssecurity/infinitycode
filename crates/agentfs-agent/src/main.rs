@@ -33,6 +33,14 @@ use crate::mcp_client::McpManager;
 use crate::memory::{load_memory_config, MemoryManager};
 use crate::skills::SkillRegistry;
 
+/// Return the global default DB path: `~/.infinity/infinity.db`.
+fn default_db_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".infinity")
+        .join("infinity.db")
+}
+
 #[derive(Parser)]
 #[command(name = "infinity-agent", version, about = "AI coding agent with AgentFS integration")]
 struct Cli {
@@ -51,7 +59,7 @@ enum Commands {
     /// List past sessions
     Sessions {
         /// Path to the AgentFS database
-        #[arg(long, default_value = "infinity.db")]
+        #[arg(long, default_value_os_t = default_db_path())]
         db: PathBuf,
         /// Number of sessions to show
         #[arg(short, long, default_value = "10")]
@@ -61,6 +69,17 @@ enum Commands {
     Mcp {
         #[command(subcommand)]
         action: McpAction,
+        /// Path to the AgentFS database
+        #[arg(long, default_value_os_t = default_db_path())]
+        db: PathBuf,
+    },
+    /// Manage skills
+    Skills {
+        #[command(subcommand)]
+        action: SkillsAction,
+        /// Path to the AgentFS database
+        #[arg(long, default_value_os_t = default_db_path())]
+        db: PathBuf,
     },
     /// Manage memory system
     Memory {
@@ -70,7 +89,7 @@ enum Commands {
     /// Launch web dashboard (read-only)
     Dashboard {
         /// Path to the AgentFS database
-        #[arg(long, default_value = "infinity.db")]
+        #[arg(long, default_value_os_t = default_db_path())]
         db: PathBuf,
         /// Port to serve on
         #[arg(long, default_value = "3210")]
@@ -79,7 +98,7 @@ enum Commands {
     /// Start interactive agent (default)
     Chat {
         /// Path to the AgentFS database
-        #[arg(long, default_value = "infinity.db")]
+        #[arg(long, default_value_os_t = default_db_path())]
         db: PathBuf,
         /// Model to use
         #[arg(long, default_value = "claude-sonnet-4-6")]
@@ -121,13 +140,31 @@ enum McpAction {
 }
 
 #[derive(Subcommand)]
+enum SkillsAction {
+    /// List all skills in the database
+    List,
+    /// Add a skill from a SKILL.md file
+    Add {
+        /// Skill name
+        name: String,
+        /// Path to a SKILL.md file
+        file: PathBuf,
+    },
+    /// Remove a skill by name
+    Remove {
+        /// Skill name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum MemoryAction {
     /// Show memory entries (playbook, episodes, tool patterns)
     Show,
     /// Show memory statistics with tier distribution
     Stats {
         /// Path to the AgentFS database
-        #[arg(long, default_value = "infinity.db")]
+        #[arg(long, default_value_os_t = default_db_path())]
         db: PathBuf,
     },
     /// Search memory entries using BM25 full-text search
@@ -138,19 +175,19 @@ enum MemoryAction {
         #[arg(short, long, default_value = "10")]
         limit: usize,
         /// Path to the AgentFS database
-        #[arg(long, default_value = "infinity.db")]
+        #[arg(long, default_value_os_t = default_db_path())]
         db: PathBuf,
     },
     /// Run compaction cycle (dedup, compress, rebalance)
     Compact {
         /// Path to the AgentFS database
-        #[arg(long, default_value = "infinity.db")]
+        #[arg(long, default_value_os_t = default_db_path())]
         db: PathBuf,
     },
     /// Clear all memory data
     Clear {
         /// Path to the AgentFS database
-        #[arg(long, default_value = "infinity.db")]
+        #[arg(long, default_value_os_t = default_db_path())]
         db: PathBuf,
     },
 }
@@ -173,7 +210,8 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Status) => cmd_status()?,
         Some(Commands::Sessions { db, limit }) => cmd_sessions(db, limit).await?,
         Some(Commands::Dashboard { db, port }) => cmd_dashboard(db, port).await?,
-        Some(Commands::Mcp { action }) => cmd_mcp(action)?,
+        Some(Commands::Mcp { action, db }) => cmd_mcp(action, &db).await?,
+        Some(Commands::Skills { action, db }) => cmd_skills(action, db).await?,
         Some(Commands::Memory { action }) => cmd_memory(action).await?,
         Some(Commands::Chat {
             db,
@@ -187,7 +225,7 @@ async fn main() -> anyhow::Result<()> {
         }
         None => {
             cmd_chat(
-                PathBuf::from("infinity.db"),
+                default_db_path(),
                 "claude-sonnet-4-6".to_string(),
                 8192,
                 None,
@@ -221,39 +259,140 @@ fn cmd_status() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_mcp(action: McpAction) -> anyhow::Result<()> {
+async fn cmd_mcp(action: McpAction, db_path: &PathBuf) -> anyhow::Result<()> {
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let afs_config = AgentFSConfig::builder(db_path)
+        .checkpoint_interval_secs(0)
+        .build();
+    let db = if db_path.exists() {
+        AgentFS::open(afs_config).await?
+    } else {
+        AgentFS::create(afs_config).await?
+    };
+
     match action {
         McpAction::List => {
-            let servers = mcp_client::list_configured_servers()
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let servers = mcp_client::list_mcp_servers_from_db(&db).await;
             display::print_mcp_server_list(&servers);
         }
-        McpAction::Add {
-            name,
-            command,
-            args,
-        } => {
-            mcp_client::add_server_to_config(&name, &command, &args, &HashMap::new())
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        McpAction::Add { name, command, args } => {
+            let entry = mcp_client::McpServerEntry {
+                command: command.clone(),
+                args: args.clone(),
+                env: HashMap::new(),
+            };
+            mcp_client::save_mcp_server_to_db(&db, &name, &entry).await;
             println!("Added MCP server '{name}': {command} {}", args.join(" "));
         }
         McpAction::Remove { name } => {
-            let removed = mcp_client::remove_server_from_config(&name)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let removed = mcp_client::remove_mcp_server_from_db(&db, &name).await;
             if removed {
                 println!("Removed MCP server '{name}'.");
             } else {
-                println!("MCP server '{name}' not found in config.");
+                println!("MCP server '{name}' not found.");
             }
         }
     }
+
+    db.close().await?;
     Ok(())
+}
+
+async fn cmd_skills(action: SkillsAction, db_path: PathBuf) -> anyhow::Result<()> {
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let afs_config = AgentFSConfig::builder(&db_path)
+        .checkpoint_interval_secs(0)
+        .build();
+    let db = if db_path.exists() {
+        AgentFS::open(afs_config).await?
+    } else {
+        AgentFS::create(afs_config).await?
+    };
+
+    match action {
+        SkillsAction::List => {
+            let skills = SkillRegistry::list_from_db(&db).await;
+            if skills.is_empty() {
+                println!("No skills in database.");
+                println!("Add one with: infinity-agent skills add <name> <file.md> --db {}", db_path.display());
+            } else {
+                let pairs: Vec<(&str, &str)> = skills
+                    .iter()
+                    .map(|s| (s.name.as_str(), s.description.as_str()))
+                    .collect();
+                display::print_skills_list(&pairs);
+            }
+        }
+        SkillsAction::Add { name, file } => {
+            let content = std::fs::read_to_string(&file)
+                .map_err(|e| anyhow::anyhow!("Cannot read {}: {e}", file.display()))?;
+
+            // Try to parse as SKILL.md format; otherwise treat entire file as body
+            let (description, body) = parse_skill_content(&content);
+
+            let skill = skills::Skill {
+                name: name.clone(),
+                description,
+                body,
+                dir: PathBuf::new(),
+            };
+            SkillRegistry::save_to_db(&db, &skill).await;
+            println!("Added skill '{name}' to DB.");
+        }
+        SkillsAction::Remove { name } => {
+            let removed = SkillRegistry::remove_from_db(&db, &name).await;
+            if removed {
+                println!("Removed skill '{name}' from DB.");
+            } else {
+                println!("Skill '{name}' not found in DB.");
+            }
+        }
+    }
+
+    db.close().await?;
+    Ok(())
+}
+
+/// Parse SKILL.md content to extract description and body.
+/// If no frontmatter is found, use empty description and the entire content as body.
+fn parse_skill_content(content: &str) -> (String, String) {
+    let trimmed = content.trim();
+    if !trimmed.starts_with("---") {
+        return (String::new(), trimmed.to_string());
+    }
+
+    let after_first = trimmed[3..].trim_start_matches(['\r', '\n']);
+    let end_idx = match after_first.find("\n---") {
+        Some(idx) => idx,
+        None => return (String::new(), trimmed.to_string()),
+    };
+    let frontmatter = &after_first[..end_idx];
+    let body_start = end_idx + 4;
+    let body = if body_start < after_first.len() {
+        after_first[body_start..].trim().to_string()
+    } else {
+        String::new()
+    };
+
+    let mut description = String::new();
+    for line in frontmatter.lines() {
+        let line = line.trim();
+        if let Some(val) = line.strip_prefix("description:") {
+            description = val.trim().to_string();
+        }
+    }
+
+    (description, body)
 }
 
 async fn cmd_memory(action: MemoryAction) -> anyhow::Result<()> {
     match action {
         MemoryAction::Show => {
-            let db_path = PathBuf::from("infinity.db");
+            let db_path = default_db_path();
             if !db_path.exists() {
                 eprintln!("Database not found: {}", db_path.display());
                 std::process::exit(1);
@@ -529,6 +668,11 @@ async fn cmd_chat(
         std::process::exit(1);
     }
 
+    // Ensure parent directory exists (e.g. ~/.infinity/)
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
     // Open or create AgentFS database
     let afs_config = AgentFSConfig::builder(&db_path)
         .checkpoint_interval_secs(30)
@@ -615,14 +759,14 @@ async fn cmd_chat(
             .await?;
     }
 
-    // Load MCP servers
-    let mcp_manager = McpManager::from_config().await;
+    // Load MCP servers (from DB with filesystem fallback)
+    let mcp_manager = McpManager::from_db_config(&db).await;
     let mcp_tools = mcp_manager.all_tool_definitions();
 
     let mcp_arc = Arc::new(Mutex::new(mcp_manager));
 
-    // Load skills
-    let skill_registry = SkillRegistry::load();
+    // Load skills (from DB with filesystem fallback)
+    let skill_registry = SkillRegistry::load_from_db(&db).await;
 
     // Load memory system
     let mem_config = load_memory_config();

@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
+use agentfs_core::AgentFS;
+
 use crate::error::{AgentError, Result};
 
 // ── JSON-RPC types ───────────────────────────────────────────────────
@@ -395,6 +397,25 @@ impl McpManager {
             server.shutdown().await;
         }
     }
+
+    /// Load MCP config from the DB (with filesystem fallback) and spawn all servers.
+    pub async fn from_db_config(db: &AgentFS) -> Self {
+        let mut servers = HashMap::new();
+        let config = load_mcp_config_from_db(db).await;
+
+        for (name, entry) in &config.mcp_servers {
+            match McpServer::spawn(name, entry).await {
+                Ok(server) => {
+                    servers.insert(name.clone(), server);
+                }
+                Err(e) => {
+                    crate::display::print_mcp_error(name, &e.to_string());
+                }
+            }
+        }
+
+        Self { servers }
+    }
 }
 
 /// Split "servername__toolname" into ("servername", "toolname").
@@ -506,4 +527,67 @@ fn save_config(path: &PathBuf, config: &McpConfigFile) -> Result<()> {
     let json = serde_json::to_string_pretty(config)?;
     std::fs::write(path, json)?;
     Ok(())
+}
+
+// ── DB-backed config helpers ────────────────────────────────────────
+
+/// Load MCP config from DB (`config:mcp:*` keys).
+/// If the DB has no entries, fall back to filesystem `load_mcp_config()` and import to DB.
+pub async fn load_mcp_config_from_db(db: &AgentFS) -> McpConfigFile {
+    let entries = db.kv.list_prefix("config:mcp:").await.unwrap_or_default();
+
+    if !entries.is_empty() {
+        let mut mcp_servers = HashMap::new();
+        for entry in entries {
+            let name = entry.key.strip_prefix("config:mcp:").unwrap_or(&entry.key);
+            if let Ok(server_entry) = serde_json::from_str::<McpServerEntry>(&entry.value) {
+                mcp_servers.insert(name.to_string(), server_entry);
+            }
+        }
+        return McpConfigFile { mcp_servers };
+    }
+
+    // Fallback: load from filesystem and import to DB
+    match load_mcp_config() {
+        Some(config) => {
+            for (name, entry) in &config.mcp_servers {
+                save_mcp_server_to_db(db, name, entry).await;
+            }
+            config
+        }
+        None => McpConfigFile {
+            mcp_servers: HashMap::new(),
+        },
+    }
+}
+
+/// Persist a single MCP server entry to the DB.
+pub async fn save_mcp_server_to_db(db: &AgentFS, name: &str, entry: &McpServerEntry) {
+    let key = format!("config:mcp:{name}");
+    if let Ok(json) = serde_json::to_string(entry) {
+        let _ = db.kv.set(&key, &json).await;
+    }
+}
+
+/// Remove an MCP server entry from the DB. Returns true if it existed.
+pub async fn remove_mcp_server_from_db(db: &AgentFS, name: &str) -> bool {
+    let key = format!("config:mcp:{name}");
+    db.kv.delete(&key).await.is_ok()
+}
+
+/// List all MCP server entries stored in the DB.
+pub async fn list_mcp_servers_from_db(db: &AgentFS) -> Vec<(String, McpServerEntry)> {
+    let entries = db.kv.list_prefix("config:mcp:").await.unwrap_or_default();
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let name = entry
+                .key
+                .strip_prefix("config:mcp:")
+                .unwrap_or(&entry.key)
+                .to_string();
+            let server_entry: McpServerEntry = serde_json::from_str(&entry.value).ok()?;
+            Some((name, server_entry))
+        })
+        .collect()
 }

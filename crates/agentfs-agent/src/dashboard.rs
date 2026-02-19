@@ -416,6 +416,58 @@ async fn api_sessions_costs(State(state): State<AppState>) -> impl IntoResponse 
     }
 }
 
+// ── Config endpoints (skills & MCP from DB) ─────────────────────────
+
+#[derive(Serialize)]
+struct ConfigSkillEntry {
+    name: String,
+    description: String,
+    body: String,
+}
+
+#[derive(Serialize)]
+struct ConfigMcpEntry {
+    name: String,
+    command: String,
+    args: Vec<String>,
+    env: std::collections::HashMap<String, String>,
+}
+
+async fn api_config_skills(State(state): State<AppState>) -> impl IntoResponse {
+    let entries = state.db.kv.list_prefix("config:skill:").await.unwrap_or_default();
+    let skills: Vec<ConfigSkillEntry> = entries
+        .into_iter()
+        .filter_map(|kv| {
+            let val: serde_json::Value = serde_json::from_str(&kv.value).ok()?;
+            Some(ConfigSkillEntry {
+                name: val.get("name")?.as_str()?.to_string(),
+                description: val.get("description")?.as_str().unwrap_or("").to_string(),
+                body: val.get("body")?.as_str().unwrap_or("").to_string(),
+            })
+        })
+        .collect();
+    Json(skills)
+}
+
+async fn api_config_mcp(State(state): State<AppState>) -> impl IntoResponse {
+    let entries = state.db.kv.list_prefix("config:mcp:").await.unwrap_or_default();
+    let servers: Vec<ConfigMcpEntry> = entries
+        .into_iter()
+        .filter_map(|kv| {
+            let name = kv.key.strip_prefix("config:mcp:")?.to_string();
+            let entry: crate::mcp_client::McpServerEntry =
+                serde_json::from_str(&kv.value).ok()?;
+            Some(ConfigMcpEntry {
+                name,
+                command: entry.command,
+                args: entry.args,
+                env: entry.env,
+            })
+        })
+        .collect();
+    Json(servers)
+}
+
 // ── Server ──────────────────────────────────────────────────────────
 
 pub async fn run_dashboard(
@@ -438,6 +490,8 @@ pub async fn run_dashboard(
         .route("/api/memory/episodes", get(api_memory_episodes))
         .route("/api/memory/tool-patterns", get(api_memory_tool_patterns))
         .route("/api/sessions/costs", get(api_sessions_costs))
+        .route("/api/config/skills", get(api_config_skills))
+        .route("/api/config/mcp", get(api_config_mcp))
         .route("/api/sessions/{id}", get(api_session_detail))
         .route("/api/sessions/{id}/events", get(api_session_events))
         .route("/api/sessions/{id}/tokens", get(api_session_tokens))
