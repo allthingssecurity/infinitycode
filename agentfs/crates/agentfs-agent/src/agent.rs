@@ -408,6 +408,22 @@ impl Agent {
     pub fn into_executor(self) -> ToolExecutor {
         self.executor
     }
+
+    /// Get the current model name.
+    pub fn model_name(&self) -> &str {
+        &self.model
+    }
+
+    /// Get the current provider name.
+    pub fn provider_name(&self) -> &str {
+        self.client.provider_name()
+    }
+
+    /// Hot-swap the LLM client and model mid-session.
+    pub fn set_client(&mut self, client: LlmClient, model: String) {
+        self.client = client;
+        self.model = model;
+    }
 }
 
 /// Rough cost estimation in microcents.

@@ -658,6 +658,62 @@ async fn resolve_last_session(db: &AgentFS) -> (String, bool) {
     }
 }
 
+/// Resolve a model shorthand or full name into a new LlmClient + model string.
+fn resolve_model_switch(
+    name: &str,
+    max_tokens: u32,
+) -> std::result::Result<(LlmClient, String, String), String> {
+    let name_lower = name.to_lowercase();
+
+    // Check presets first
+    for (shorthand, provider, model_id, _desc) in display::MODEL_PRESETS {
+        if name_lower == *shorthand || name_lower == *model_id {
+            let client = create_client_for_provider(provider, model_id, max_tokens)?;
+            return Ok((client, model_id.to_string(), provider.to_string()));
+        }
+    }
+
+    // Allow direct provider/model: "nvidia" or "anthropic"
+    match name_lower.as_str() {
+        "nvidia" => {
+            let model = "moonshotai/kimi-k2.5";
+            let client = create_client_for_provider("nvidia", model, max_tokens)?;
+            Ok((client, model.to_string(), "nvidia".to_string()))
+        }
+        "anthropic" => {
+            let model = "claude-sonnet-4-6";
+            let client = create_client_for_provider("anthropic", model, max_tokens)?;
+            Ok((client, model.to_string(), "anthropic".to_string()))
+        }
+        _ => Err(format!(
+            "Unknown model '{name}'. Use: sonnet, opus, haiku, kimi, nvidia, anthropic"
+        )),
+    }
+}
+
+/// Create an LlmClient for a given provider and model.
+fn create_client_for_provider(
+    provider: &str,
+    model: &str,
+    max_tokens: u32,
+) -> std::result::Result<LlmClient, String> {
+    match provider {
+        "nvidia" => {
+            let api_key = std::env::var("NVIDIA_API_KEY")
+                .map_err(|_| "NVIDIA_API_KEY not set. Export it first: export NVIDIA_API_KEY=nvapi-...".to_string())?;
+            Ok(LlmClient::Nvidia(NvidiaClient::new(
+                api_key,
+                model.to_string(),
+                max_tokens,
+            )))
+        }
+        "anthropic" | _ => Ok(LlmClient::Anthropic(AnthropicClient::new(
+            model.to_string(),
+            max_tokens,
+        ))),
+    }
+}
+
 async fn cmd_chat(
     db_path: PathBuf,
     model: Option<String>,
@@ -1002,6 +1058,37 @@ async fn cmd_chat(
                     println!("Connected MCP servers:");
                     for (name, count) in &summary {
                         println!("  {name} ({count} tools)");
+                    }
+                }
+                continue;
+            }
+            "/help" => {
+                println!("Commands:");
+                println!("  /model [name]  — Show or switch model (sonnet, opus, haiku, kimi)");
+                println!("  /mcp           — Show connected MCP servers");
+                println!("  /skills        — List available skills");
+                println!("  /memory        — Show memory stats");
+                println!("  /tokens        — Show session token usage");
+                println!("  /session       — Show current session ID");
+                println!("  /clear         — Clear conversation history");
+                println!("  /new           — Start fresh conversation");
+                println!("  /quit          — Exit");
+                continue;
+            }
+            _ if input.starts_with("/model") => {
+                let arg = input["/model".len()..].trim();
+                if arg.is_empty() {
+                    display::print_model_info(agent.model_name(), agent.provider_name());
+                } else {
+                    // Resolve model preset
+                    match resolve_model_switch(arg, max_tokens) {
+                        Ok((new_client, new_model, new_provider)) => {
+                            agent.set_client(new_client, new_model.clone());
+                            display::print_model_switched(&new_model, &new_provider);
+                        }
+                        Err(msg) => {
+                            display::print_model_error(&msg);
+                        }
                     }
                 }
                 continue;

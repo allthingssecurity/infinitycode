@@ -27,6 +27,14 @@ pub enum LlmClient {
 }
 
 impl LlmClient {
+    /// Return the provider name for display.
+    pub fn provider_name(&self) -> &str {
+        match self {
+            LlmClient::Anthropic(_) => "anthropic",
+            LlmClient::Nvidia(_) => "nvidia",
+        }
+    }
+
     pub async fn stream_message(
         &self,
         auth: &mut AuthProvider,

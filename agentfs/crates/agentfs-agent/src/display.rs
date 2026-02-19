@@ -824,6 +824,81 @@ pub fn print_compaction_report(report: &crate::memory::compaction::CompactionRep
     );
 }
 
+// ── Model switching ─────────────────────────────────────────────────
+
+/// Available model presets for /model command.
+pub const MODEL_PRESETS: &[(&str, &str, &str, &str)] = &[
+    // (shorthand, provider, model_id, description)
+    ("sonnet",  "anthropic", "claude-sonnet-4-6",    "Claude Sonnet 4.6 (default)"),
+    ("opus",    "anthropic", "claude-opus-4-6",       "Claude Opus 4.6"),
+    ("haiku",   "anthropic", "claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
+    ("kimi",    "nvidia",    "moonshotai/kimi-k2.5",  "Kimi K2.5 (NVIDIA NIM)"),
+];
+
+/// Print current model info and available presets.
+pub fn print_model_info(current_model: &str, current_provider: &str) {
+    println!(
+        "\n  {}{}Current model:{} {}{}{} ({})",
+        SetForegroundColor(Color::Cyan),
+        SetAttribute(Attribute::Bold),
+        SetAttribute(Attribute::Reset),
+        SetForegroundColor(Color::White),
+        current_model,
+        ResetColor,
+        current_provider,
+    );
+    println!(
+        "\n  {}Available models:{}",
+        SetForegroundColor(Color::DarkGrey),
+        ResetColor,
+    );
+    for (shorthand, provider, model_id, desc) in MODEL_PRESETS {
+        let active = if *model_id == current_model { " *" } else { "" };
+        let active_color = if *model_id == current_model {
+            Color::Green
+        } else {
+            Color::DarkGrey
+        };
+        println!(
+            "    {}{shorthand:<8}{} {}{model_id:<36}{} {}{desc}{active}{}",
+            SetForegroundColor(Color::Cyan),
+            ResetColor,
+            SetForegroundColor(Color::White),
+            ResetColor,
+            SetForegroundColor(active_color),
+            ResetColor,
+        );
+        let _ = provider; // used by resolver, not printed separately
+    }
+    println!(
+        "\n  {}Switch with: /model <name>  (e.g. /model opus, /model kimi){}",
+        SetForegroundColor(Color::DarkGrey),
+        ResetColor,
+    );
+}
+
+/// Print model switch confirmation.
+pub fn print_model_switched(model: &str, provider: &str) {
+    println!(
+        "\n  {}\u{2713}{} Switched to {}{}{} ({provider})",
+        SetForegroundColor(Color::Green),
+        ResetColor,
+        SetForegroundColor(Color::White),
+        model,
+        ResetColor,
+    );
+}
+
+/// Print model switch error.
+pub fn print_model_error(msg: &str) {
+    eprintln!(
+        "\n  {}{}\u{2717} {msg}{}",
+        SetForegroundColor(Color::Red),
+        SetAttribute(Attribute::Bold),
+        SetAttribute(Attribute::Reset),
+    );
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn tool_display_name(name: &str) -> String {
