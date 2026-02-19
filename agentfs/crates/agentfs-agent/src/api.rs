@@ -284,16 +284,18 @@ impl OpenAICompatClient {
             });
         }
 
-        // Emit a synthetic MessageStart (OpenAI doesn't send one)
+        // Emit synthetic events that OpenAI doesn't send but our accumulator needs
         let (tx, rx) = mpsc::channel(64);
         let _ = tx
             .send(StreamEvent::MessageStart {
-                id: "nvidia".to_string(),
+                id: "openai-compat".to_string(),
                 input_tokens: 0,
             })
             .await;
 
-        // Also emit a ContentBlockStart for text (so accumulator works)
+        // Emit ContentBlockStart for text — the accumulator needs this to collect text.
+        // If the model produces no text and goes straight to tool_calls, the stateful
+        // parser will properly close this block via ContentBlockStop.
         let _ = tx
             .send(StreamEvent::ContentBlockStart {
                 index: 0,
@@ -304,6 +306,7 @@ impl OpenAICompatClient {
         tokio::spawn(async move {
             let mut stream = resp.bytes_stream();
             let mut buffer = String::new();
+            let mut parser = streaming::OpenAIStreamParser::new();
 
             while let Some(chunk) = stream.next().await {
                 let chunk = match chunk {
@@ -317,7 +320,7 @@ impl OpenAICompatClient {
                     let event_text = buffer[..pos].to_string();
                     buffer = buffer[pos + 2..].to_string();
 
-                    let events = streaming::parse_openai_sse_event(&event_text);
+                    let events = parser.parse(&event_text);
                     for event in events {
                         if tx.send(event).await.is_err() {
                             return;
@@ -333,7 +336,7 @@ impl OpenAICompatClient {
                         if line.trim().is_empty() {
                             continue;
                         }
-                        let events = streaming::parse_openai_sse_event(&line);
+                        let events = parser.parse(&line);
                         for event in events {
                             if tx.send(event).await.is_err() {
                                 return;
@@ -347,7 +350,7 @@ impl OpenAICompatClient {
 
             // Process remaining
             if !buffer.trim().is_empty() {
-                let events = streaming::parse_openai_sse_event(buffer.trim());
+                let events = parser.parse(buffer.trim());
                 for event in events {
                     let _ = tx.send(event).await;
                 }
@@ -456,6 +459,9 @@ fn convert_messages_to_openai(messages: &[Message], system: Option<&str>) -> Vec
                     let mut assistant_msg = json!({ "role": "assistant" });
                     if !text_parts.is_empty() {
                         assistant_msg["content"] = json!(text_parts);
+                    } else if !tool_calls.is_empty() {
+                        // OpenAI requires content field even when only tool_calls
+                        assistant_msg["content"] = Value::Null;
                     }
                     if !tool_calls.is_empty() {
                         assistant_msg["tool_calls"] = Value::Array(tool_calls);
