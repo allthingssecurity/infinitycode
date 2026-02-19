@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use agentfs_core::analytics::TokenRecord;
 
-use crate::api::{AnthropicClient, Message};
+use crate::api::{LlmClient, Message};
 use crate::auth::AuthProvider;
 use crate::display;
 use crate::error::{AgentError, Result};
@@ -18,7 +18,7 @@ const MESSAGES_KEY_PREFIX: &str = "session:messages:";
 
 /// The agentic loop: prompt -> API -> stream -> tool_use -> execute -> loop.
 pub struct Agent {
-    client: AnthropicClient,
+    client: LlmClient,
     executor: ToolExecutor,
     messages: Vec<Message>,
     tool_defs: Vec<Value>,
@@ -32,7 +32,7 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(
-        client: AnthropicClient,
+        client: LlmClient,
         executor: ToolExecutor,
         system: Option<String>,
         session_id: String,
@@ -416,7 +416,11 @@ fn estimate_cost(model: &str, input_tokens: u64, output_tokens: u64) -> i64 {
         (15_000_000i64, 75_000_000i64)
     } else if model.contains("haiku") {
         (250_000i64, 1_250_000i64)
+    } else if model.contains("kimi") || model.contains("moonshotai") {
+        // NVIDIA-hosted Kimi — free tier / pricing TBD
+        (0i64, 0i64)
     } else {
+        // Default: Claude Sonnet pricing
         (3_000_000i64, 15_000_000i64)
     };
 

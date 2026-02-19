@@ -151,6 +151,154 @@ pub fn parse_sse_event(raw: &str) -> Option<StreamEvent> {
     }
 }
 
+// ── OpenAI-compatible SSE parser ─────────────────────────────────────
+// Used for NVIDIA NIM (Kimi K2.5) and any OpenAI-compatible provider.
+// Maps OpenAI streaming chunks → our unified StreamEvent enum.
+
+/// Parse an OpenAI-format SSE data line into StreamEvent(s).
+/// OpenAI sends lines like:
+///   data: {"id":"...","choices":[{"delta":{"content":"hi"},"index":0,"finish_reason":null}]}
+///   data: [DONE]
+pub fn parse_openai_sse_event(raw: &str) -> Vec<StreamEvent> {
+    let mut events = Vec::new();
+
+    for line in raw.lines() {
+        let data = if let Some(rest) = line.strip_prefix("data: ") {
+            rest.trim()
+        } else if let Some(rest) = line.strip_prefix("data:") {
+            rest.trim()
+        } else {
+            continue;
+        };
+
+        if data == "[DONE]" {
+            events.push(StreamEvent::MessageStop);
+            continue;
+        }
+
+        let v: Value = match serde_json::from_str(data) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+
+        // Extract usage if present (some providers send it in the final chunk)
+        if let Some(usage) = v.get("usage") {
+            let input_tokens = usage
+                .get("prompt_tokens")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0);
+            let output_tokens = usage
+                .get("completion_tokens")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0);
+
+            // Emit MessageStart with input tokens if we see usage
+            if input_tokens > 0 {
+                events.push(StreamEvent::MessageStart {
+                    id: id.clone(),
+                    input_tokens,
+                });
+            }
+            if output_tokens > 0 {
+                events.push(StreamEvent::MessageDelta {
+                    stop_reason: "end_turn".to_string(),
+                    output_tokens,
+                });
+            }
+        }
+
+        let choices = match v.get("choices").and_then(|c| c.as_array()) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        for choice in choices {
+            let finish_reason = choice
+                .get("finish_reason")
+                .and_then(|f| f.as_str())
+                .unwrap_or("");
+
+            if let Some(delta) = choice.get("delta") {
+                // Text content
+                if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                    if !content.is_empty() {
+                        events.push(StreamEvent::TextDelta {
+                            index: 0,
+                            text: content.to_string(),
+                        });
+                    }
+                }
+
+                // Tool calls
+                if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                    for tc in tool_calls {
+                        let tc_index = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as u32;
+
+                        // If we get id + function.name, it's the start of a new tool call
+                        if let Some(tc_id) = tc.get("id").and_then(|i| i.as_str()) {
+                            let func = tc.get("function").unwrap_or(&Value::Null);
+                            let name = func
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            events.push(StreamEvent::ContentBlockStart {
+                                index: tc_index + 1, // offset by 1 since 0 is text
+                                block_type: ContentBlockType::ToolUse {
+                                    id: tc_id.to_string(),
+                                    name,
+                                },
+                            });
+                            // Also emit any initial arguments
+                            if let Some(args) = func.get("arguments").and_then(|a| a.as_str()) {
+                                if !args.is_empty() {
+                                    events.push(StreamEvent::InputJsonDelta {
+                                        index: tc_index + 1,
+                                        partial_json: args.to_string(),
+                                    });
+                                }
+                            }
+                        } else if let Some(func) = tc.get("function") {
+                            // Continuation: just arguments delta
+                            if let Some(args) = func.get("arguments").and_then(|a| a.as_str()) {
+                                if !args.is_empty() {
+                                    events.push(StreamEvent::InputJsonDelta {
+                                        index: tc_index + 1,
+                                        partial_json: args.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Handle finish_reason
+            match finish_reason {
+                "stop" => {
+                    events.push(StreamEvent::ContentBlockStop { index: 0 });
+                    events.push(StreamEvent::MessageDelta {
+                        stop_reason: "end_turn".to_string(),
+                        output_tokens: 0,
+                    });
+                }
+                "tool_calls" => {
+                    // Close any open tool call blocks
+                    events.push(StreamEvent::MessageDelta {
+                        stop_reason: "tool_use".to_string(),
+                        output_tokens: 0,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    events
+}
+
 /// Accumulates streaming content blocks into complete content.
 pub struct ContentAccumulator {
     /// Accumulated text content.

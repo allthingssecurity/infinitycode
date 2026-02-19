@@ -25,7 +25,7 @@ use agentfs_core::config::AgentFSConfig;
 use agentfs_core::AgentFS;
 
 use crate::agent::Agent;
-use crate::api::AnthropicClient;
+use crate::api::{AnthropicClient, LlmClient, NvidiaClient};
 use crate::auth::AuthProvider;
 use crate::config::AgentConfig;
 use crate::executor::ToolExecutor;
@@ -100,9 +100,9 @@ enum Commands {
         /// Path to the AgentFS database
         #[arg(long, default_value_os_t = default_db_path())]
         db: PathBuf,
-        /// Model to use
-        #[arg(long, default_value = "claude-sonnet-4-6")]
-        model: String,
+        /// Model to use (default depends on provider)
+        #[arg(long)]
+        model: Option<String>,
         /// Maximum output tokens
         #[arg(long, default_value = "8192")]
         max_tokens: u32,
@@ -115,6 +115,9 @@ enum Commands {
         /// Resume a previous session by ID (or "last" for the most recent)
         #[arg(short = 'r', long)]
         resume: Option<String>,
+        /// LLM provider: anthropic (default) or nvidia
+        #[arg(long, default_value = "anthropic")]
+        provider: String,
     },
 }
 
@@ -220,17 +223,19 @@ async fn main() -> anyhow::Result<()> {
             system,
             prompt,
             resume,
+            provider,
         }) => {
-            cmd_chat(db, model, max_tokens, system, prompt, resume).await?;
+            cmd_chat(db, model, max_tokens, system, prompt, resume, provider).await?;
         }
         None => {
             cmd_chat(
                 default_db_path(),
-                "claude-sonnet-4-6".to_string(),
+                None,
                 8192,
                 None,
                 None,
                 None,
+                "anthropic".to_string(),
             )
             .await?;
         }
@@ -655,15 +660,29 @@ async fn resolve_last_session(db: &AgentFS) -> (String, bool) {
 
 async fn cmd_chat(
     db_path: PathBuf,
-    model: String,
+    model: Option<String>,
     max_tokens: u32,
     system: Option<String>,
     prompt: Option<String>,
     resume: Option<String>,
+    provider: String,
 ) -> anyhow::Result<()> {
+    // Resolve model default based on provider
+    let model = model.unwrap_or_else(|| match provider.as_str() {
+        "nvidia" => "moonshotai/kimi-k2.5".to_string(),
+        _ => "claude-sonnet-4-6".to_string(),
+    });
+
     let mut config = AgentConfig::from_args(db_path.clone(), model.clone(), max_tokens, system)?;
 
-    if !config.auth.is_authenticated() {
+    // For NVIDIA provider, we don't need Anthropic auth — just check for NVIDIA_API_KEY
+    if provider == "nvidia" {
+        if std::env::var("NVIDIA_API_KEY").is_err() {
+            eprintln!("NVIDIA_API_KEY environment variable not set.");
+            eprintln!("Set it with: export NVIDIA_API_KEY=nvapi-...");
+            std::process::exit(1);
+        }
+    } else if !config.auth.is_authenticated() {
         eprintln!("Not authenticated. Run `infinity-agent login` or set ANTHROPIC_API_KEY.");
         std::process::exit(1);
     }
@@ -796,7 +815,13 @@ async fn cmd_chat(
         AgentFS::open(afs_config2).await?
     };
 
-    let client = AnthropicClient::new(model.clone(), max_tokens);
+    let client: LlmClient = match provider.as_str() {
+        "nvidia" => {
+            let api_key = std::env::var("NVIDIA_API_KEY").unwrap();
+            LlmClient::Nvidia(NvidiaClient::new(api_key, model.clone(), max_tokens))
+        }
+        _ => LlmClient::Anthropic(AnthropicClient::new(model.clone(), max_tokens)),
+    };
     let executor = ToolExecutor::new(executor_db, session_id.clone()).with_mcp(Arc::clone(&mcp_arc));
 
     let mut default_system = config.system_prompt.take().unwrap_or_else(|| {
