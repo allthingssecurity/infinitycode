@@ -595,11 +595,6 @@ async fn cmd_chat(
     let mcp_manager = McpManager::from_config().await;
     let mcp_tools = mcp_manager.all_tool_definitions();
 
-    // Print MCP status
-    for (name, count) in mcp_manager.server_summary() {
-        display::print_mcp_status(name, count);
-    }
-
     let mcp_arc = Arc::new(Mutex::new(mcp_manager));
 
     // Load skills
@@ -611,7 +606,6 @@ async fn cmd_chat(
     let memory_manager = if mem_config.enabled {
         match MemoryManager::from_config(mem_config.clone(), Arc::clone(&db_arc)).await {
             Ok(manager) => {
-                display::print_memory_status(manager.provider_count(), manager.has_reflector());
                 let mgr = Arc::new(manager);
                 // Notify providers of session start
                 mgr.on_session_start(&session_id).await;
@@ -708,11 +702,50 @@ async fn cmd_chat(
 
     // Interactive REPL
     display::print_banner(&model, &db_path.display().to_string());
-    if is_resume {
-        println!(
-            "  \x1b[36mresumed session: {session_id}\x1b[0m"
-        );
-    }
+
+    // Build memory info string
+    let memory_info_string = if let Some(ref mgr) = memory_manager {
+        let executor_ref = agent.executor();
+        let playbook_count = executor_ref.db.kv
+            .list_prefix("memory:playbook:")
+            .await
+            .map(|v| v.len())
+            .unwrap_or(0);
+        let episode_count = executor_ref.db.kv
+            .list_prefix("memory:episode:")
+            .await
+            .map(|v| v.len())
+            .unwrap_or(0);
+        let has_reflect = if mgr.has_reflector() { " + reflection" } else { "" };
+        Some(format!(
+            "{playbook_count} playbook entries, {episode_count} episodes{has_reflect}"
+        ))
+    } else {
+        None
+    };
+
+    // Get MCP summary
+    let mcp_summary = {
+        let manager = mcp_arc.lock().await;
+        manager.server_summary().into_iter().map(|(n, c)| (n.to_string(), c)).collect::<Vec<_>>()
+    };
+
+    // Built-in tool names
+    let builtin_tools: Vec<&str> = vec![
+        "read_file", "write_file", "bash", "list_dir", "search", "tree", "kv_get", "kv_set",
+    ];
+
+    // Count loaded messages for resume
+    let loaded_msg_count = agent.message_count();
+
+    display::print_startup_status(
+        &session_id,
+        loaded_msg_count,
+        is_resume,
+        memory_info_string.as_deref(),
+        &builtin_tools,
+        &mcp_summary,
+    );
 
     let mut rl = rustyline::DefaultEditor::new()?;
     let prompt = display::prompt_string();

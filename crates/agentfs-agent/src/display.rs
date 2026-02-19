@@ -513,19 +513,45 @@ pub fn prompt_string() -> String {
 
 /// Print a welcome banner.
 pub fn print_banner(model: &str, db_path: &str) {
+    println!();
+    let logo_lines = [
+        r"  ██╗███╗   ██╗███████╗██╗███╗   ██╗██╗████████╗██╗   ██╗",
+        r"  ██║████╗  ██║██╔════╝██║████╗  ██║██║╚══██╔══╝╚██╗ ██╔╝",
+        r"  ██║██╔██╗ ██║█████╗  ██║██╔██╗ ██║██║   ██║    ╚████╔╝ ",
+        r"  ██║██║╚██╗██║██╔══╝  ██║██║╚██╗██║██║   ██║     ╚██╔╝  ",
+        r"  ██║██║ ╚████║██║     ██║██║ ╚████║██║   ██║      ██║   ",
+        r"  ╚═╝╚═╝  ╚═══╝╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝   ╚═╝      ╚═╝   ",
+    ];
+    for line in &logo_lines {
+        println!(
+            "{}{}{}{}",
+            SetForegroundColor(Color::Magenta),
+            SetAttribute(Attribute::Bold),
+            line,
+            SetAttribute(Attribute::Reset),
+        );
+    }
     println!(
-        "\n  {}{}\u{221e} Infinity Agent{}",
-        SetForegroundColor(Color::Magenta),
-        SetAttribute(Attribute::Bold),
-        SetAttribute(Attribute::Reset),
+        "  {}AI Coding Agent \u{2022} {} \u{2022} {}{}",
+        SetForegroundColor(Color::DarkGrey),
+        env!("CARGO_PKG_VERSION"),
+        model,
+        ResetColor,
     );
+    println!();
     println!(
-        "  {}model: {model}  \u{2502}  db: {db_path}{}",
+        "  {}db: {db_path}{}",
         SetForegroundColor(Color::DarkGrey),
         ResetColor,
     );
     println!(
-        "  {}commands: /quit  /new  /clear  /tokens  /session  /skills  /mcp  /memory{}",
+        "  {}Type {}/help{} for commands \u{2022} {}Ctrl+C{} to cancel \u{2022} {}Ctrl+D{} to exit{}",
+        SetForegroundColor(Color::DarkGrey),
+        SetForegroundColor(Color::White),
+        SetForegroundColor(Color::DarkGrey),
+        SetForegroundColor(Color::White),
+        SetForegroundColor(Color::DarkGrey),
+        SetForegroundColor(Color::White),
         SetForegroundColor(Color::DarkGrey),
         ResetColor,
     );
@@ -615,6 +641,75 @@ pub fn print_memory_status(provider_count: usize, reflection: bool) {
         SetForegroundColor(Color::DarkGrey),
         ResetColor,
     );
+}
+
+/// Print startup status block with green checkmarks (after banner).
+pub fn print_startup_status(
+    session_id: &str,
+    msg_count: usize,
+    is_resume: bool,
+    memory_info: Option<&str>,
+    tool_names: &[&str],
+    mcp_info: &[(String, usize)],
+) {
+    println!();
+
+    // Session line
+    let session_short = if session_id.len() > 8 {
+        &session_id[..8]
+    } else {
+        session_id
+    };
+    if is_resume {
+        println!(
+            "  {}\u{2713}{} Session {}{}{} resumed ({msg_count} messages)",
+            SetForegroundColor(Color::Green),
+            ResetColor,
+            SetForegroundColor(Color::Cyan),
+            session_short,
+            ResetColor,
+        );
+    } else {
+        println!(
+            "  {}\u{2713}{} Session {}{}{} started",
+            SetForegroundColor(Color::Green),
+            ResetColor,
+            SetForegroundColor(Color::Cyan),
+            session_short,
+            ResetColor,
+        );
+    }
+
+    // Memory line
+    if let Some(info) = memory_info {
+        println!(
+            "  {}\u{2713}{} Memory: {}",
+            SetForegroundColor(Color::Green),
+            ResetColor,
+            info,
+        );
+    }
+
+    // Tools line
+    if !tool_names.is_empty() {
+        println!(
+            "  {}\u{2713}{} Tools: {}",
+            SetForegroundColor(Color::Green),
+            ResetColor,
+            tool_names.join(", "),
+        );
+    }
+
+    // MCP line
+    for (name, count) in mcp_info {
+        println!(
+            "  {}\u{2713}{} MCP: {name} ({count} tools)",
+            SetForegroundColor(Color::Green),
+            ResetColor,
+        );
+    }
+
+    println!();
 }
 
 /// Print memory stats for the /memory command.
