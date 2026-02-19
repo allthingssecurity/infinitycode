@@ -153,6 +153,7 @@ impl Agent {
             let mut spinner_active = true;
             let mut spinner = Some(spinner);
             let mut tool_prep_spinner: Option<display::Spinner> = None;
+            let mut tool_gen_tracker: Option<display::ToolGenTracker> = None;
 
             while let Some(event) = rx.recv().await {
                 // Stop thinking spinner on first content event
@@ -173,21 +174,25 @@ impl Agent {
                 // Render live — rich rendering for text, standard for other events
                 if let StreamEvent::TextDelta { text, .. } = &event {
                     renderer.push(text);
+                } else if let StreamEvent::InputJsonDelta { partial_json, .. } = &event {
+                    // Show progress for tool call generation (especially for large writes)
+                    if let Some(ref mut tracker) = tool_gen_tracker {
+                        tracker.update(partial_json.len());
+                    }
                 } else {
                     display::print_stream_event(&event);
                 }
 
-                // Show "preparing actions" spinner when tool calls start generating
-                // (this fills the dead zone between text output and tool execution)
+                // Show tool generation progress when tool calls start
                 if let StreamEvent::ContentBlockStart {
-                    block_type: crate::streaming::ContentBlockType::ToolUse { .. },
+                    block_type: crate::streaming::ContentBlockType::ToolUse { name, .. },
                     ..
                 } = &event
                 {
-                    if tool_prep_spinner.is_none() {
+                    if tool_prep_spinner.is_none() && tool_gen_tracker.is_none() {
                         renderer.finish();
-                        tool_prep_spinner =
-                            Some(display::Spinner::start("Preparing actions"));
+                        // Use progress tracker instead of static spinner for better UX
+                        tool_gen_tracker = Some(display::ToolGenTracker::start(name));
                     }
                 }
 
@@ -214,6 +219,9 @@ impl Agent {
                         if let Some(s) = tool_prep_spinner.take() {
                             s.stop().await;
                         }
+                        if let Some(t) = tool_gen_tracker.take() {
+                            t.stop().await;
+                        }
                         renderer.finish();
                         return Err(AgentError::Stream(message.clone()));
                     }
@@ -225,6 +233,9 @@ impl Agent {
             renderer.finish();
             if let Some(s) = tool_prep_spinner {
                 s.stop().await;
+            }
+            if let Some(t) = tool_gen_tracker {
+                t.stop().await;
             }
             if let Some(s) = spinner.take() {
                 s.stop().await;

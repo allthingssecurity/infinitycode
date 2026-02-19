@@ -127,6 +127,95 @@ impl Drop for Spinner {
     }
 }
 
+// ── Tool generation progress tracker ────────────────────────────────
+
+/// Live progress tracker for tool call generation (replaces static spinner).
+/// Shows which tool is being generated and a live byte/line counter.
+pub struct ToolGenTracker {
+    running: Arc<AtomicBool>,
+    bytes: Arc<std::sync::atomic::AtomicUsize>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ToolGenTracker {
+    /// Start tracking tool call generation for the given tool name.
+    pub fn start(tool_name: &str) -> Self {
+        let running = Arc::new(AtomicBool::new(true));
+        let bytes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let running_clone = running.clone();
+        let bytes_clone = bytes.clone();
+        let display_name = tool_display_name(tool_name);
+
+        let handle = tokio::spawn(async move {
+            let mut frame = 0usize;
+            let mut stdout = std::io::stdout();
+            let _ = stdout.execute(cursor::Hide);
+            let start = Instant::now();
+
+            while running_clone.load(Ordering::Relaxed) {
+                let spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.len()];
+                let elapsed = start.elapsed().as_secs_f32();
+                let color = SPINNER_COLORS[(frame / 4) % SPINNER_COLORS.len()];
+                let total_bytes = bytes_clone.load(std::sync::atomic::Ordering::Relaxed);
+                let size_str = format_bytes(total_bytes);
+
+                print!(
+                    "\r{}{}  {spinner} Generating {display_name} {}{size_str} ({elapsed:.1}s){}      ",
+                    SetForegroundColor(color),
+                    SetAttribute(Attribute::Bold),
+                    SetForegroundColor(Color::DarkGrey),
+                    SetAttribute(Attribute::Reset),
+                );
+                let _ = stdout.flush();
+                frame += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            }
+
+            // Clear line
+            let width = crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(120);
+            print!("\r{}\r", " ".repeat(width));
+            let _ = stdout.flush();
+            let _ = stdout.execute(cursor::Show);
+        });
+
+        Self {
+            running,
+            bytes,
+            handle: Some(handle),
+        }
+    }
+
+    /// Update with new bytes received.
+    pub fn update(&self, additional_bytes: usize) {
+        self.bytes.fetch_add(additional_bytes, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Stop the tracker.
+    pub async fn stop(mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.await;
+        }
+    }
+}
+
+impl Drop for ToolGenTracker {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        let _ = std::io::stdout().execute(cursor::Show);
+    }
+}
+
+fn format_bytes(bytes: usize) -> String {
+    if bytes == 0 {
+        String::new()
+    } else if bytes >= 1024 {
+        format!("{}KB ", bytes / 1024)
+    } else {
+        format!("{}B ", bytes)
+    }
+}
+
 // ── Stream events ───────────────────────────────────────────────────
 
 /// Print a non-text stream event to the terminal.
