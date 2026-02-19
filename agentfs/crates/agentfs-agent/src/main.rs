@@ -25,7 +25,7 @@ use agentfs_core::config::AgentFSConfig;
 use agentfs_core::AgentFS;
 
 use crate::agent::Agent;
-use crate::api::{AnthropicClient, LlmClient, NvidiaClient};
+use crate::api::{AnthropicClient, LlmClient, OpenAICompatClient};
 use crate::auth::AuthProvider;
 use crate::config::AgentConfig;
 use crate::executor::ToolExecutor;
@@ -673,12 +673,17 @@ fn resolve_model_switch(
         }
     }
 
-    // Allow direct provider/model: "nvidia" or "anthropic"
+    // Allow direct provider names
     match name_lower.as_str() {
         "nvidia" => {
             let model = "moonshotai/kimi-k2.5";
             let client = create_client_for_provider("nvidia", model, max_tokens)?;
             Ok((client, model.to_string(), "nvidia".to_string()))
+        }
+        "openrouter" => {
+            let model = "moonshotai/kimi-k2.5";
+            let client = create_client_for_provider("openrouter", model, max_tokens)?;
+            Ok((client, model.to_string(), "openrouter".to_string()))
         }
         "anthropic" => {
             let model = "claude-sonnet-4-6";
@@ -686,7 +691,7 @@ fn resolve_model_switch(
             Ok((client, model.to_string(), "anthropic".to_string()))
         }
         _ => Err(format!(
-            "Unknown model '{name}'. Use: sonnet, opus, haiku, kimi, nvidia, anthropic"
+            "Unknown model '{name}'. Use: sonnet, opus, haiku, kimi, openrouter, anthropic"
         )),
     }
 }
@@ -701,7 +706,16 @@ fn create_client_for_provider(
         "nvidia" => {
             let api_key = std::env::var("NVIDIA_API_KEY")
                 .map_err(|_| "NVIDIA_API_KEY not set. Export it first: export NVIDIA_API_KEY=nvapi-...".to_string())?;
-            Ok(LlmClient::Nvidia(NvidiaClient::new(
+            Ok(LlmClient::OpenAICompat(OpenAICompatClient::nvidia(
+                api_key,
+                model.to_string(),
+                max_tokens,
+            )))
+        }
+        "openrouter" => {
+            let api_key = std::env::var("OPENROUTER_API_KEY")
+                .map_err(|_| "OPENROUTER_API_KEY not set. Export it first: export OPENROUTER_API_KEY=sk-or-...".to_string())?;
+            Ok(LlmClient::OpenAICompat(OpenAICompatClient::openrouter(
                 api_key,
                 model.to_string(),
                 max_tokens,
@@ -725,17 +739,23 @@ async fn cmd_chat(
 ) -> anyhow::Result<()> {
     // Resolve model default based on provider
     let model = model.unwrap_or_else(|| match provider.as_str() {
-        "nvidia" => "moonshotai/kimi-k2.5".to_string(),
+        "nvidia" | "openrouter" => "moonshotai/kimi-k2.5".to_string(),
         _ => "claude-sonnet-4-6".to_string(),
     });
 
     let mut config = AgentConfig::from_args(db_path.clone(), model.clone(), max_tokens, system)?;
 
-    // For NVIDIA provider, we don't need Anthropic auth — just check for NVIDIA_API_KEY
+    // For non-Anthropic providers, check their API key instead
     if provider == "nvidia" {
         if std::env::var("NVIDIA_API_KEY").is_err() {
             eprintln!("NVIDIA_API_KEY environment variable not set.");
             eprintln!("Set it with: export NVIDIA_API_KEY=nvapi-...");
+            std::process::exit(1);
+        }
+    } else if provider == "openrouter" {
+        if std::env::var("OPENROUTER_API_KEY").is_err() {
+            eprintln!("OPENROUTER_API_KEY environment variable not set.");
+            eprintln!("Set it with: export OPENROUTER_API_KEY=sk-or-...");
             std::process::exit(1);
         }
     } else if !config.auth.is_authenticated() {
@@ -874,7 +894,11 @@ async fn cmd_chat(
     let client: LlmClient = match provider.as_str() {
         "nvidia" => {
             let api_key = std::env::var("NVIDIA_API_KEY").unwrap();
-            LlmClient::Nvidia(NvidiaClient::new(api_key, model.clone(), max_tokens))
+            LlmClient::OpenAICompat(OpenAICompatClient::nvidia(api_key, model.clone(), max_tokens))
+        }
+        "openrouter" => {
+            let api_key = std::env::var("OPENROUTER_API_KEY").unwrap();
+            LlmClient::OpenAICompat(OpenAICompatClient::openrouter(api_key, model.clone(), max_tokens))
         }
         _ => LlmClient::Anthropic(AnthropicClient::new(model.clone(), max_tokens)),
     };

@@ -10,6 +10,7 @@ use crate::streaming::{self, StreamEvent};
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_API_VERSION: &str = "2023-06-01";
 const NVIDIA_API_URL: &str = "https://integrate.api.nvidia.com/v1/chat/completions";
+const OPENROUTER_API_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
 /// A message in the conversation (Anthropic format internally).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -23,7 +24,7 @@ pub struct Message {
 /// Unified LLM client that dispatches to the right provider.
 pub enum LlmClient {
     Anthropic(AnthropicClient),
-    Nvidia(NvidiaClient),
+    OpenAICompat(OpenAICompatClient),
 }
 
 impl LlmClient {
@@ -31,7 +32,7 @@ impl LlmClient {
     pub fn provider_name(&self) -> &str {
         match self {
             LlmClient::Anthropic(_) => "anthropic",
-            LlmClient::Nvidia(_) => "nvidia",
+            LlmClient::OpenAICompat(c) => &c.provider_label,
         }
     }
 
@@ -44,7 +45,7 @@ impl LlmClient {
     ) -> Result<mpsc::Receiver<StreamEvent>> {
         match self {
             LlmClient::Anthropic(c) => c.stream_message(auth, messages, tools, system).await,
-            LlmClient::Nvidia(c) => c.stream_message(messages, tools, system).await,
+            LlmClient::OpenAICompat(c) => c.stream_message(messages, tools, system).await,
         }
     }
 }
@@ -182,25 +183,41 @@ impl AnthropicClient {
     }
 }
 
-// ── NVIDIA / OpenAI-compatible Client ───────────────────────────────
+// ── OpenAI-compatible Client (NVIDIA, OpenRouter, etc.) ─────────────
 
-/// Client for NVIDIA NIM (Kimi K2.5) and any OpenAI-compatible API.
-pub struct NvidiaClient {
+/// Client for any OpenAI-compatible API (NVIDIA NIM, OpenRouter, etc.).
+pub struct OpenAICompatClient {
     client: reqwest::Client,
     api_key: String,
     model: String,
     max_tokens: u32,
     base_url: String,
+    /// Display label for the provider (e.g. "nvidia", "openrouter").
+    pub provider_label: String,
 }
 
-impl NvidiaClient {
-    pub fn new(api_key: String, model: String, max_tokens: u32) -> Self {
+impl OpenAICompatClient {
+    /// Create a client for NVIDIA NIM.
+    pub fn nvidia(api_key: String, model: String, max_tokens: u32) -> Self {
         Self {
             client: reqwest::Client::new(),
             api_key,
             model,
             max_tokens,
             base_url: NVIDIA_API_URL.to_string(),
+            provider_label: "nvidia".to_string(),
+        }
+    }
+
+    /// Create a client for OpenRouter.
+    pub fn openrouter(api_key: String, model: String, max_tokens: u32) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            api_key,
+            model,
+            max_tokens,
+            base_url: OPENROUTER_API_URL.to_string(),
+            provider_label: "openrouter".to_string(),
         }
     }
 
